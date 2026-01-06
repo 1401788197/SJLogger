@@ -14,7 +14,10 @@ public class SJLogger {
     /// 悬浮窗
     private var floatingWindow: SJFloatingWindow?
     
-    private init() {}
+    private init() {
+        // 在初始化时就执行Swizzling，确保即使延迟调用start()也能监听到请求
+        SJURLSessionSwizzler.shared.swizzle()
+    }
     
     // MARK: - 启动和停止
     
@@ -38,9 +41,8 @@ public class SJLogger {
             return
         }
         
-        // 首次启动：注册URLProtocol和Swizzling
+        // 首次启动：注册URLProtocol
         URLProtocol.registerClass(SJURLProtocol.self)
-        SJURLSessionSwizzler.shared.swizzle()
         
         // 显示悬浮窗
         if SJLoggerConfig.shared.showFloatingWindow {
@@ -75,10 +77,11 @@ public class SJLogger {
     
     /// 显示悬浮窗
     public func showFloatingWindow() {
-        guard floatingWindow == nil else { return }
+        if floatingWindow == nil {
+            floatingWindow = SJFloatingWindow()
+        }
         
         DispatchQueue.main.async { [weak self] in
-            self?.floatingWindow = SJFloatingWindow()
             self?.floatingWindow?.show()
         }
     }

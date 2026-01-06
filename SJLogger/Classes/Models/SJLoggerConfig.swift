@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 // MARK: - 配置模型
 /// SJLogger配置类
@@ -35,6 +36,14 @@ public class SJLoggerConfig {
     
     /// 是否显示悬浮窗入口
     public var showFloatingWindow: Bool = true
+    
+    /// 悬浮窗背景色
+    public var floatingWindowColor: UIColor = UIColor(
+        red: 0.0 / 255.0,
+        green: 180.0 / 255.0,
+        blue: 216.0 / 255.0,
+        alpha: 1.0
+    )
     
     private init() {}
     

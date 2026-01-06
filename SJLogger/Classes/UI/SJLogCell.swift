@@ -8,9 +8,9 @@ class SJLogCell: UITableViewCell {
     
     private let typeLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 10, weight: .medium)
+        label.font = .systemFont(ofSize: 11, weight: .semibold)
         label.textAlignment = .center
-        label.layer.cornerRadius = 4
+        label.layer.cornerRadius = 6
         label.layer.masksToBounds = true
         return label
     }()
@@ -53,6 +53,15 @@ class SJLogCell: UITableViewCell {
         return label
     }()
     
+    private let checkmarkImageView: UIImageView = {
+        let imageView = UIImageView()
+        imageView.image = UIImage(systemName: "checkmark.circle.fill")
+        imageView.tintColor = .systemBlue
+        imageView.contentMode = .scaleAspectFit
+        imageView.isHidden = true
+        return imageView
+    }()
+    
     // MARK: - 初始化
     
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
@@ -67,12 +76,26 @@ class SJLogCell: UITableViewCell {
     // MARK: - UI设置
     
     private func setupUI() {
+        // 设置卡片样式
+        backgroundColor = .clear
+        contentView.backgroundColor = .secondarySystemGroupedBackground
+        contentView.layer.cornerRadius = 12
+        contentView.layer.masksToBounds = true
+        selectionStyle = .none
+        // 添加阴影容器
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOffset = CGSize(width: 0, height: 2)
+        layer.shadowRadius = 4
+        layer.shadowOpacity = 0.08
+        layer.masksToBounds = false
+        
         contentView.addSubview(typeLabel)
         contentView.addSubview(methodLabel)
         contentView.addSubview(urlLabel)
         contentView.addSubview(statusLabel)
         contentView.addSubview(timeLabel)
         contentView.addSubview(durationLabel)
+        contentView.addSubview(checkmarkImageView)
         
         typeLabel.translatesAutoresizingMaskIntoConstraints = false
         methodLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -80,12 +103,13 @@ class SJLogCell: UITableViewCell {
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         timeLabel.translatesAutoresizingMaskIntoConstraints = false
         durationLabel.translatesAutoresizingMaskIntoConstraints = false
+        checkmarkImageView.translatesAutoresizingMaskIntoConstraints = false
         
         NSLayoutConstraint.activate([
-            typeLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            typeLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
-            typeLabel.widthAnchor.constraint(equalToConstant: 50),
-            typeLabel.heightAnchor.constraint(equalToConstant: 18),
+            typeLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            typeLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+            typeLabel.widthAnchor.constraint(equalToConstant: 55),
+            typeLabel.heightAnchor.constraint(equalToConstant: 20),
             
             methodLabel.leadingAnchor.constraint(equalTo: typeLabel.trailingAnchor, constant: 8),
             methodLabel.centerYAnchor.constraint(equalTo: typeLabel.centerYAnchor),
@@ -94,21 +118,42 @@ class SJLogCell: UITableViewCell {
             statusLabel.centerYAnchor.constraint(equalTo: typeLabel.centerYAnchor),
             statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 40),
             
-            urlLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            urlLabel.topAnchor.constraint(equalTo: typeLabel.bottomAnchor, constant: 6),
-            urlLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            urlLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            urlLabel.topAnchor.constraint(equalTo: typeLabel.bottomAnchor, constant: 8),
+            urlLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             
-            timeLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
-            timeLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
+            timeLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            timeLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
             
             durationLabel.trailingAnchor.constraint(equalTo: timeLabel.leadingAnchor, constant: -12),
-            durationLabel.centerYAnchor.constraint(equalTo: timeLabel.centerYAnchor)
+            durationLabel.centerYAnchor.constraint(equalTo: timeLabel.centerYAnchor),
+            
+            checkmarkImageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            checkmarkImageView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            checkmarkImageView.widthAnchor.constraint(equalToConstant: 24),
+            checkmarkImageView.heightAnchor.constraint(equalToConstant: 24)
         ])
+    }
+    
+    // MARK: - 布局
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // 添加Cell之间的间距
+        contentView.frame = contentView.frame.inset(by: UIEdgeInsets(top: 4, left: 12, bottom: 4, right: 12))
     }
     
     // MARK: - 配置
     
-    func configure(with log: SJLoggerModel) {
+    func configure(with log: SJLoggerModel, isSelected: Bool = false, showCheckmark: Bool = false) {
+        // 显示/隐藏勾选图标
+        checkmarkImageView.isHidden = !showCheckmark
+        if showCheckmark {
+            checkmarkImageView.image = isSelected ? 
+                UIImage(systemName: "checkmark.circle.fill") : 
+                UIImage(systemName: "circle")
+        }
+        
         // 类型标签
         typeLabel.text = log.type.rawValue
         switch log.type {

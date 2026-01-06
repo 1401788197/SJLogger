@@ -8,7 +8,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'SJLogger'
-  s.version          = '0.2.0'
+  s.version          = '0.3.0'
   s.summary          = 'A powerful iOS network logger framework for debugging, similar to CocoaDebug.'
 
   s.description      = <<-DESC
@@ -16,7 +16,6 @@ Pod::Spec.new do |s|
   
   Features:
   - Automatic HTTP/HTTPS request interception
-  - TCP network monitoring
   - Real-time log recording and display
   - Floating window for quick access
   - Log search and filtering
@@ -29,7 +28,7 @@ Pod::Spec.new do |s|
 
   s.homepage         = 'https://github.com/1401788197/SJLogger'
   s.license          = { :type => 'MIT', :file => 'LICENSE' }
-  s.author           = { 'shengjie' => 'shengjie@hai.group' }
+  s.author           = { 'shengjie' => 'shengjie' }
   s.source           = { :git => 'https://github.com/1401788197/SJLogger.git', :tag => s.version.to_s }
 
   s.ios.deployment_target = '15.0'

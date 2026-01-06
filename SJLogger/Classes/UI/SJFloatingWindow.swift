@@ -15,11 +15,10 @@ class SJFloatingWindow: UIView {
     
     private let circleView: UIView = {
         let view = UIView()
-        view.backgroundColor = .systemBlue
-        view.layer.cornerRadius = 25
+        view.layer.cornerRadius = 12.5
         view.layer.shadowColor = UIColor.black.cgColor
-        view.layer.shadowOffset = CGSize(width: 0, height: 2)
-        view.layer.shadowRadius = 6
+        view.layer.shadowOffset = CGSize(width: 0, height: 1)
+        view.layer.shadowRadius = 3
         view.layer.shadowOpacity = 0.3
         return view
     }()
@@ -27,7 +26,7 @@ class SJFloatingWindow: UIView {
     private let countLabel: UILabel = {
         let label = UILabel()
         label.textColor = .white
-        label.font = .systemFont(ofSize: 16, weight: .bold)
+        label.adjustsFontSizeToFitWidth = true
         label.textAlignment = .center
         label.text = "0"
         return label
@@ -36,7 +35,7 @@ class SJFloatingWindow: UIView {
     // MARK: - 初始化
     
     init() {
-        super.init(frame: CGRect(x: 0, y: 0, width: 50, height: 50))
+        super.init(frame: CGRect(x: 0, y: 0, width: 25, height: 25))
         setupUI()
         setupGestures()
         observeLogUpdates()
@@ -55,6 +54,9 @@ class SJFloatingWindow: UIView {
     // MARK: - UI设置
     
     private func setupUI() {
+        // 设置背景色
+        circleView.backgroundColor = SJLoggerConfig.shared.floatingWindowColor
+        
         addSubview(circleView)
         circleView.addSubview(countLabel)
         
@@ -104,7 +106,7 @@ class SJFloatingWindow: UIView {
         bringToFront()
         
         // 初始位置：右下角
-        let x = window.bounds.width - 70
+        let x = window.bounds.width - 45
         let y = window.bounds.height - 150
         self.frame.origin = CGPoint(x: x, y: y)
         

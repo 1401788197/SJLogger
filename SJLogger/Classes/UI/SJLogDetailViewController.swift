@@ -19,8 +19,10 @@ public class SJLogDetailViewController: UIViewController {
     private lazy var contentStackView: UIStackView = {
         let stack = UIStackView()
         stack.axis = .vertical
-        stack.spacing = 16
+        stack.spacing = 20
         stack.distribution = .fill
+        stack.layoutMargins = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        stack.isLayoutMarginsRelativeArrangement = true
         return stack
     }()
     

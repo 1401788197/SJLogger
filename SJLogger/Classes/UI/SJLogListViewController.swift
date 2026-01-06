@@ -11,9 +11,10 @@ public class SJLogListViewController: UIViewController {
         table.delegate = self
         table.dataSource = self
         table.register(SJLogCell.self, forCellReuseIdentifier: "SJLogCell")
-        table.rowHeight = 80
-        table.separatorStyle = .singleLine
-        table.backgroundColor = .systemBackground
+        table.rowHeight = 90
+        table.separatorStyle = .none
+        table.backgroundColor = .systemGroupedBackground
+        table.contentInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
         return table
     }()
     
@@ -22,6 +23,7 @@ public class SJLogListViewController: UIViewController {
         search.delegate = self
         search.placeholder = "搜索URL、方法、内容..."
         search.searchBarStyle = .minimal
+        search.backgroundImage = UIImage()
         return search
     }()
     
@@ -55,11 +57,11 @@ public class SJLogListViewController: UIViewController {
     
     private lazy var emptyLabel: UILabel = {
         let label = UILabel()
-        label.text = "暂无日志\n开始使用应用后，网络请求将显示在这里"
+        label.text = "📭\n\n暂无日志\n开始使用应用后，网络请求将显示在这里"
         label.textAlignment = .center
         label.textColor = .secondaryLabel
         label.numberOfLines = 0
-        label.font = .systemFont(ofSize: 16)
+        label.font = .systemFont(ofSize: 15)
         label.isHidden = true
         return label
     }()
@@ -399,14 +401,10 @@ extension SJLogListViewController: UITableViewDataSource {
     public func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "SJLogCell", for: indexPath) as! SJLogCell
         let log = filteredLogs[indexPath.row]
-        cell.configure(with: log)
         
-        // 多选模式下显示选中状态
-        if isSelectionMode {
-            cell.accessoryType = selectedLogs.contains(log.id) ? .checkmark : .none
-        } else {
-            cell.accessoryType = .none
-        }
+        // 配置Cell，传入选中状态和是否显示勾选图标
+        let isSelected = selectedLogs.contains(log.id)
+        cell.configure(with: log, isSelected: isSelected, showCheckmark: isSelectionMode)
         
         return cell
     }
@@ -477,6 +475,11 @@ extension SJLogListViewController: UISearchBarDelegate {
                 self?.updateUI()
             }
         }
+    }
+    
+    public func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+        // 点击搜索按钮时收起键盘
+        searchBar.resignFirstResponder()
     }
     
     public func searchBarCancelButtonClicked(_ searchBar: UISearchBar) {

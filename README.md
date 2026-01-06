@@ -1,6 +1,6 @@
 # SJLogger
 
-[![CI Status](https://img.shields.io/travis/Hicreate/SJLogger.svg?style=flat)](https://travis-ci.org/Hicreate/SJLogger)
+[![CI Status](https://img.shields.io/travis/SJLogger.svg?style=flat)](https://travis-ci.org/SJLogger)
 [![Version](https://img.shields.io/cocoapods/v/SJLogger.svg?style=flat)](https://cocoapods.org/pods/SJLogger)
 [![License](https://img.shields.io/cocoapods/l/SJLogger.svg?style=flat)](https://cocoapods.org/pods/SJLogger)
 [![Platform](https://img.shields.io/cocoapods/p/SJLogger.svg?style=flat)](https://cocoapods.org/pods/SJLogger)
@@ -10,21 +10,23 @@
 ## 功能特性
 
 - ✅ **自动拦截所有请求**：使用Method Swizzling技术，自动拦截所有网络请求（包括第三方SDK）
-- ✅ **网络请求拦截**：自动拦截所有HTTP/HTTPS请求
-- ✅ **TCP日志监控**：支持TCP层网络活动监控
 - ✅ **实时日志记录**：实时记录和展示网络请求详情
-- ✅ **悬浮窗入口**：应用内悬浮窗，方便快速查看日志
-- ✅ **日志搜索过滤**：支持关键词搜索和多种过滤条件
-- ✅ **日志复制分享**：一键复制或分享日志内容
-- ✅ **URL模式配置**：支持监听和忽略特定URL模式
+- ✅ **悬浮窗入口**：小圆圈悬浮窗显示日志数量，可拖动、点击查看、长按清除
+- ✅ **日志搜索过滤**：支持关键词搜索和多种过滤条件（成功/失败/类型）
+- ✅ **多选导出**：支持全部导出或选择性导出日志
+- ✅ **WebSocket日志**：支持WebSocket连接和消息日志记录
 - ✅ **详细信息展示**：完整显示请求头、请求体、响应头、响应体
 - ✅ **性能统计**：显示请求耗时、响应大小等统计信息
-- ✅ **线程安全**：多线程环境下安全使用
 - ✅ **零侵入集成**：无需修改第三方库代码，自动监听所有请求
+- ✅ **美观UI**：现代化卡片式设计，流畅的交互体验
 
 ## 截图
 
-> 添加截图展示UI界面
+<p align="center">
+  <img src="IMG_1494.PNG" width="30%" />
+  <img src="IMG_1495.PNG" width="30%" />
+  <img src="IMG_1496.PNG" width="30%" />
+</p>
 
 ## 系统要求
 
@@ -36,7 +38,15 @@
 
 ### CocoaPods
 
+**推荐方式**：仅在 Debug 模式下集成
+
 在你的 `Podfile` 中添加：
+
+```ruby
+pod 'SJLogger', :configurations => ['Debug']
+```
+
+或者在所有配置下安装：
 
 ```ruby
 pod 'SJLogger'
@@ -52,10 +62,15 @@ pod install
 
 ### 1. 基础使用
 
-**推荐方式**：在设置根控制器后立即启动 SJLogger
+**重要**：
+- 使用 `#if DEBUG` 确保仅在 Debug 模式下启用
+- 在设置根控制器后调用 `start()`
+- 在切换 TabBar 或重新设置根控制器时也需要调用
 
 ```swift
+#if DEBUG
 import SJLogger
+#endif
 
 // SwiftUI App
 @main
@@ -64,8 +79,10 @@ struct MyApp: App {
         WindowGroup {
             ContentView()
                 .onAppear {
+                    #if DEBUG
                     // 在视图出现后启动SJLogger
                     SJLogger.shared.start()
+                    #endif
                 }
         }
     }
@@ -79,80 +96,74 @@ func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options conn
     window?.rootViewController = UINavigationController(rootViewController: ViewController())
     window?.makeKeyAndVisible()
     
-    // 设置根控制器后立即启动SJLogger
+    #if DEBUG
+    // ⚠️ 设置根控制器后立即启动SJLogger
     SJLogger.shared.start()
+    #endif
 }
 
-// UIKit App - AppDelegate（旧版）
-func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplicationLaunchOptionsKey: Any]?) -> Bool {
-    window = UIWindow(frame: UIScreen.main.bounds)
-    window?.rootViewController = UINavigationController(rootViewController: ViewController())
-    window?.makeKeyAndVisible()
+// 切换TabBar或重新设置根控制器时
+func switchToMainTabBar() {
+    let tabBarController = UITabBarController()
+    // ... 配置TabBar
     
-    // 设置根控制器后立即启动SJLogger
+    window?.rootViewController = tabBarController
+    
+    #if DEBUG
+    // ⚠️ 重新设置根控制器后，需要再次调用start()
     SJLogger.shared.start()
-    
-    return true
+    #endif
 }
 ```
 
 **注意**：
+- ⚠️ **每次设置根控制器后都需要调用 `start()`**（包括切换TabBar、退出登录等场景）
 - ✅ `start()` 方法可以多次调用，内部会自动处理重复调用
-- ✅ 建议在设置根控制器后调用，确保悬浮窗能正确显示
-- ✅ 每次调用都会更新配置，无需担心重复初始化
+- ✅ 每次调用都会更新悬浮窗状态，确保悬浮窗正确显示
+- ✅ **即使延迟调用 `start()`，也能监听到所有网络请求**（Method Swizzling 在首次访问 `SJLogger.shared` 时自动执行）
 
 ### 2. 自定义配置
 
 ```swift
+#if DEBUG
+// 启动SJLogger
 SJLogger.shared.start { config in
-    // 是否启用日志记录
+    // 配置日志记录
     config.isEnabled = true
-    
-    // 最大日志数量
     config.maxLogCount = 500
-    
-    // 是否记录请求体和响应体
     config.logRequestBody = true
     config.logResponseBody = true
-    
-    // 响应体最大记录大小（字节）
-    config.maxResponseBodySize = 1024 * 1024 // 1MB
-    
-    // 是否启用WebSocket日志
-    config.enableWebSocketLog = true
-    
-    // 是否在控制台打印日志
+    config.enableWebSocketLog = false
+    config.showFloatingWindow = true
     config.printToConsole = false
     
-    // 是否显示悬浮窗
-    config.showFloatingWindow = true
+    // 不设置 addMonitoredURL 则监控所有请求
+    // 如果需要只监控特定URL，可以添加：
+    config.addMonitoredURL(pattern: "api.example.com")
+    // config.addMonitoredURL(pattern: ".*\\.myapi\\.com/.*")
+    
+    // 添加需要忽略的URL模式
+    config.addIgnoredURL(pattern: ".*\\.png$")
+    config.addIgnoredURL(pattern: ".*\\.jpg$")
+    config.addIgnoredURL(pattern: ".*\\.gif$")
+    config.addIgnoredURL(pattern: ".*\\.jpeg$")
 }
+#endif
 ```
 
-### 3. URL过滤配置
+### 3. 手动显示日志界面
 
 ```swift
-// 添加需要监控的URL模式（正则表达式）
-SJLogger.shared.addMonitoredURL("api.example.com")
-SJLogger.shared.addMonitoredURL(".*\\.myapi\\.com/.*")
-
-// 添加需要忽略的URL模式
-SJLogger.shared.addIgnoredURL(".*\\.png$")
-SJLogger.shared.addIgnoredURL(".*\\.jpg$")
-SJLogger.shared.addIgnoredURL("analytics\\.google\\.com")
-```
-
-### 4. 手动显示日志界面
-
-```swift
+#if DEBUG
 // 从当前视图控制器显示日志列表
 SJLogger.shared.showLogList(from: self)
 
 // 或者自动查找顶层视图控制器
 SJLogger.shared.showLogList()
+#endif
 ```
 
-### 5. 日志管理
+### 4. 日志管理
 
 ```swift
 // 清除所有日志
@@ -191,20 +202,6 @@ SJLogger.shared.stop()
 
 ## 高级功能
 
-### TCP日志监控
-
-框架支持TCP层的网络监控（需要iOS 12.0+）：
-
-```swift
-// 启用TCP日志
-SJLogger.shared.setTCPLogEnabled(true)
-
-// TCP日志会自动记录：
-// - 网络路径变化
-// - 连接状态
-// - 数据传输统计
-```
-
 ### 日志搜索和过滤
 
 在日志列表界面中：
@@ -216,98 +213,45 @@ SJLogger.shared.setTCPLogEnabled(true)
 
 点击任意日志查看详细信息：
 - 基本信息（URL、方法、状态码、耗时等）
-- 请求头和请求体
-- 响应头和响应体
-- TCP连接信息（如果有）
+- 请求头和请求体（支持JSON格式化）
+- 响应头和响应体（支持JSON格式化）
 - 支持复制和分享完整日志
 
-## 第三方库集成
+### 多选导出
 
-**重要提示**：从 v0.1.0 开始，SJLogger 使用 Method Swizzling 技术自动拦截所有网络请求，包括第三方SDK内部的请求。**大多数情况下你不需要做任何额外配置**，只需调用 `SJLogger.shared.start()` 即可。
+1. 点击左上角"选择"按钮进入编辑模式
+2. 点击要导出的日志（会显示 ✓ 标记）
+3. 点击导出按钮导出选中的日志
+4. 点击"取消"退出编辑模式
 
-以下配置方法仅在自动拦截失效时使用：
+**提示**：
+- 普通模式下点击导出按钮会导出全部日志
+- 编辑模式下点击导出按钮只导出选中的日志
 
-### Moya集成
+## WebSocket 日志记录
 
-如果自动拦截失效，可以手动配置 Session：
-
-#### 方法一：使用便捷方法（推荐）
-
-```swift
-import Moya
-import SJLogger
-
-// 创建支持SJLogger的Provider
-let provider = MoyaProvider<YourAPI>.withSJLogger()
-
-// 或者带插件
-let provider = MoyaProvider<YourAPI>.withSJLogger(
-    plugins: [NetworkLoggerPlugin()]
-)
-```
-
-#### 方法二：手动配置Session
+SJLogger 支持手动记录 WebSocket 事件：
 
 ```swift
-import Moya
 import SJLogger
 
-// 创建自定义Session
-let configuration = URLSessionConfiguration.default
-configuration.protocolClasses = [SJURLProtocol.self] + (configuration.protocolClasses ?? [])
-let session = Session(configuration: configuration)
+// 连接建立
+SJLogger.logWebSocket(url: "wss://example.com/socket", event: .connected(headers: [:]))
 
-// 使用自定义Session创建Provider
-let provider = MoyaProvider<YourAPI>(session: session)
+// 接收文本消息
+SJLogger.logWebSocket(url: "wss://example.com/socket", event: .text("Hello"))
+
+// 发送文本消息
+SJLogger.logWebSocket(url: "wss://example.com/socket", event: .text("World"))
+
+// 连接断开
+SJLogger.logWebSocket(url: "wss://example.com/socket", event: .disconnected(code: 1000, reason: "Normal"))
+
+// 错误
+SJLogger.logWebSocket(url: "wss://example.com/socket", event: .error(NSError(...)))
 ```
 
-#### 方法三：使用辅助方法
-
-```swift
-import Moya
-import SJLogger
-
-// 使用SJLogger提供的Session
-let session = SJLogger.createMoyaSession()
-let provider = MoyaProvider<YourAPI>(session: session)
-```
-
-### Alamofire集成
-
-如果使用 Alamofire，需要配置 Session：
-
-```swift
-import Alamofire
-import SJLogger
-
-let configuration = URLSessionConfiguration.default
-configuration.protocolClasses = [SJURLProtocol.self] + (configuration.protocolClasses ?? [])
-let session = Session(configuration: configuration)
-
-// 使用配置好的session发送请求
-session.request("https://api.example.com/data").response { response in
-    // 处理响应
-}
-```
-
-### AFNetworking集成
-
-如果使用 AFNetworking（Objective-C），需要配置 sessionConfiguration：
-
-```objc
-#import <SJLogger/SJLogger-Swift.h>
-
-NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration defaultSessionConfiguration];
-configuration.protocolClasses = @[[SJURLProtocol class]];
-
-AFHTTPSessionManager *manager = [[AFHTTPSessionManager alloc] initWithSessionConfiguration:configuration];
-```
-
-### WebSocket 集成（Starscream 等）
-
-**重要说明**：WebSocket 连接无法通过 URLProtocol 自动拦截，需要在你的代码中手动调用日志记录方法。
-
-#### 使用方法（超简单，只需一行代码）
+### 与 Starscream 集成示例
 
 ```swift
 import Starscream
@@ -315,17 +259,15 @@ import SJLogger
 
 extension ChatSocketManager: WebSocketDelegate {
     func didReceive(event: WebSocketEvent, client: any WebSocketClient) {
-        let url = "wss://example.com/socket" // 你的WebSocket URL
+        let url = "wss://example.com/socket"
         
-        // 转换Starscream事件为SJLogger事件并记录
+        // 转发事件到SJLogger
         switch event {
         case .connected(let headers):
             SJLogger.logWebSocket(url: url, event: .connected(headers))
-            login() // 你的业务逻辑
             
         case .text(let string):
             SJLogger.logWebSocket(url: url, event: .text(string))
-            handleMsg(str: string) // 你的业务逻辑
             
         case .binary(let data):
             SJLogger.logWebSocket(url: url, event: .binary(data))
@@ -414,10 +356,9 @@ SJLogger
 
 ## 更新日志
 
-### Version 0.1.0
+### Version 0.3.0
 - 初始版本发布
 - 支持HTTP/HTTPS请求拦截
-- 支持TCP日志监控
 - 完整的UI界面
 - 日志搜索、过滤、复制、分享功能
 
