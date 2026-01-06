@@ -7,6 +7,7 @@
 //
 
 import UIKit
+import SJLogger
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -15,7 +16,25 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplicationLaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // 启动SJLogger
+        SJLogger.shared.start { config in
+            // 配置日志记录
+            config.isEnabled = true
+            config.maxLogCount = 500
+            config.logRequestBody = true
+            config.logResponseBody = true
+            config.enableTCPLog = true
+            config.showFloatingWindow = true
+            config.printToConsole = false
+            
+            // 添加需要监控的URL模式（可选，不设置则监控所有）
+            // config.addMonitoredURL(pattern: "api.example.com")
+            
+            // 添加需要忽略的URL模式
+            // config.addIgnoredURL(pattern: ".*\\.png$")
+            // config.addIgnoredURL(pattern: ".*\\.jpg$")
+        }
+        
         return true
     }
 

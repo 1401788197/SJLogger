@@ -9,34 +9,37 @@
 Pod::Spec.new do |s|
   s.name             = 'SJLogger'
   s.version          = '0.1.0'
-  s.summary          = 'A short description of SJLogger.'
-
-# This description is used to generate tags and improve search results.
-#   * Think: What does it do? Why did you write it? What is the focus?
-#   * Try to keep it short, snappy and to the point.
-#   * Write the description between the DESC delimiters below.
-#   * Finally, don't worry about the indent, CocoaPods strips it!
+  s.summary          = 'A powerful iOS network logger framework for debugging, similar to CocoaDebug.'
 
   s.description      = <<-DESC
-TODO: Add long description of the pod here.
+  SJLogger is a comprehensive iOS network logging framework that helps developers debug network requests.
+  
+  Features:
+  - Automatic HTTP/HTTPS request interception
+  - TCP network monitoring
+  - Real-time log recording and display
+  - Floating window for quick access
+  - Log search and filtering
+  - Copy and share logs
+  - URL pattern configuration
+  - Detailed request/response information
+  - Performance statistics
+  - Thread-safe implementation
                        DESC
 
-  s.homepage         = 'https://github.com/Hicreate/SJLogger'
-  # s.screenshots     = 'www.example.com/screenshots_1', 'www.example.com/screenshots_2'
+  s.homepage         = 'https://github.com/1401788197/SJLogger'
   s.license          = { :type => 'MIT', :file => 'LICENSE' }
-  s.author           = { 'Hicreate' => 'shengjie@hai.group' }
-  s.source           = { :git => 'https://github.com/Hicreate/SJLogger.git', :tag => s.version.to_s }
-  # s.social_media_url = 'https://twitter.com/<TWITTER_USERNAME>'
+  s.author           = { 'shengjie' => 'shengjie@hai.group' }
+  s.source           = { :git => 'https://github.com/1401788197/SJLogger.git', :tag => s.version.to_s }
 
-  s.ios.deployment_target = '10.0'
+  s.ios.deployment_target = '15.0'
+  s.swift_version = '5.0'
 
-  s.source_files = 'SJLogger/Classes/**/*'
+  s.source_files = 'SJLogger/Classes/**/*.swift'
   
-  # s.resource_bundles = {
-  #   'SJLogger' => ['SJLogger/Assets/*.png']
-  # }
-
-  # s.public_header_files = 'Pod/Classes/**/*.h'
-  # s.frameworks = 'UIKit', 'MapKit'
-  # s.dependency 'AFNetworking', '~> 2.3'
+  s.frameworks = 'UIKit', 'Foundation', 'Network'
+  
+  s.pod_target_xcconfig = {
+    'SWIFT_VERSION' => '5.0'
+  }
 end
