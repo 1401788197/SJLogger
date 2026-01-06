@@ -102,7 +102,7 @@ public class SJURLProtocol: URLProtocol {
     
     /// 更新日志响应信息
     private func updateLog(with response: URLResponse?, data: Data?, error: Error?) {
-        guard var log = currentLog else { return }
+        guard let log = currentLog else { return }
         
         log.endTime = Date()
         

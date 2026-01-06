@@ -23,7 +23,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             config.maxLogCount = 500
             config.logRequestBody = true
             config.logResponseBody = true
-            config.enableTCPLog = true
             config.showFloatingWindow = true
             config.printToConsole = false
             
