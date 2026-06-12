@@ -1,32 +1,44 @@
 # SJLogger
 
-[![CI Status](https://img.shields.io/travis/SJLogger.svg?style=flat)](https://travis-ci.org/SJLogger)
 [![Version](https://img.shields.io/cocoapods/v/SJLogger.svg?style=flat)](https://cocoapods.org/pods/SJLogger)
 [![License](https://img.shields.io/cocoapods/l/SJLogger.svg?style=flat)](https://cocoapods.org/pods/SJLogger)
 [![Platform](https://img.shields.io/cocoapods/p/SJLogger.svg?style=flat)](https://cocoapods.org/pods/SJLogger)
+[![Swift](https://img.shields.io/badge/Swift-5.0-orange.svg?style=flat)](https://swift.org)
 
-一个强大的iOS网络日志查看框架，类似CocoaDebug，支持实时监控、查看、复制和分享网络请求日志。
+SJLogger is a Debug network logger for iOS apps. It captures HTTP/HTTPS requests, WebSocket events, request bodies, response bodies, headers, timing, traffic size, failures, and slow requests, then presents them in an in-app floating debugger.
 
-## 功能特性
+It is designed for day-to-day development, QA, test builds, and debugging third-party network behavior without attaching Charles, Proxyman, or Xcode console filters.
 
-- ✅ **自动拦截所有请求**：使用Method Swizzling技术，自动拦截所有网络请求（包括第三方SDK）
-- ✅ **实时日志记录**：实时记录和展示网络请求详情
-- 🆕 **动态/固定刷新开关**：操作界面时切换到「固定」模式，新请求暂存为顶部提示条而不打断查看；滚动浏览时可自动固定
-- 🆕 **按接口(Path)分组**：自动聚合相同接口，展示调用次数/成功率/平均耗时，点进去查看该接口的全部调用
-- 🆕 **顶部统计条**：实时显示总数 / 成功率 / 平均耗时 / 总流量
-- 🆕 **高级筛选**：按类型 / 方法 / 状态码段(2xx~5xx/Error) / 慢请求 / 仅失败 组合过滤
-- 🆕 **JSON 语法高亮**：详情页报文自动高亮（适配深浅色）
-- 🆕 **cURL / HAR 导出**：一键复制 cURL 命令或导出 HAR
-- 🆕 **持久化与设置页**：日志可落盘（重启不丢），独立设置页集中管理开关/阈值/清理
-- ✅ **悬浮窗入口**：悬浮窗显示日志数量，可拖动、点击查看、长按弹出菜单（日志/设置/清除）
-- ✅ **日志搜索过滤**：支持关键词搜索与快捷分类（全部/成功/失败/HTTP/WebSocket）
-- ✅ **多选导出**：支持全部导出或选择性导出日志
-- ✅ **WebSocket日志**：支持原生与 Starscream（近似零埋点适配器）的连接/收发/断开记录
-- ✅ **详细信息展示**：完整显示请求头、请求体、响应头、响应体
-- ✅ **零侵入集成**：无需修改第三方库代码，自动监听所有请求
-- ✅ **美观UI**：现代化卡片式设计，流畅的交互体验
+中文简介：SJLogger 是一个 iOS App 内网络日志调试工具，适合 Debug/测试包中查看接口请求、响应、耗时、失败、WebSocket 消息、持久化日志和导出数据。
 
-## 截图
+## What It Solves
+
+- See network requests directly inside the app.
+- Inspect headers, request body, response body, status code, duration, and error.
+- Search and filter logs while new requests are still arriving.
+- Group repeated calls by API path to find noisy or slow endpoints.
+- Export logs as text, cURL, or HAR for backend and QA collaboration.
+- Keep logs on disk across app restarts when persistence is enabled.
+- Decode encrypted request/response bodies with a custom decryptor.
+- Record WebSocket lifecycle and messages, with optional Starscream integration.
+
+## Features
+
+- Automatic HTTP/HTTPS capture through URL loading interception.
+- Floating entry button with log count, tap to open, long press to clear current logs.
+- Custom in-app navigation UI, isolated from host app `UINavigationBar` global styling.
+- Request list and endpoint-group views.
+- Quick filters: all, success, failed, HTTP, WebSocket.
+- Advanced filters: type, method, status bucket, slow request, failed only.
+- Dynamic/frozen refresh mode so new logs do not interrupt inspection.
+- Detail view with formatted body display and JSON highlighting.
+- Copy, share, cURL export, HAR export, and multi-select export.
+- Disk persistence with maximum storage size limit.
+- Settings screen for collection, UI, persistence, slow threshold, and cleanup.
+- Optional `SJLogger/Starscream` subspec for Starscream WebSocket events.
+- Core pod has no third-party dependency.
+
+## Screenshots
 
 <p align="center">
   <img src="IMG_1494.PNG" width="30%" />
@@ -34,325 +46,280 @@
   <img src="IMG_1496.PNG" width="30%" />
 </p>
 
-## 系统要求
+## Requirements
 
 - iOS 15.0+
 - Swift 5.0+
 - Xcode 13.0+
 
-## 安装
+## Installation
 
-### CocoaPods
+### Core
 
-**推荐方式**：仅在 Debug 模式下集成
-
-在你的 `Podfile` 中添加：
+Recommended for Debug builds:
 
 ```ruby
-pod 'SJLogger', :configurations => ['Debug']
+pod 'SJLogger', '~> 0.4.0', :configurations => ['Debug']
 ```
 
-或者在所有配置下安装：
+Or install in all configurations:
 
 ```ruby
-pod 'SJLogger'
+pod 'SJLogger', '~> 0.4.0'
 ```
 
-然后运行：
+`pod 'SJLogger'` installs only the default `Core` subspec. It does not include Starscream.
 
-```bash
-pod install
-```
+### Starscream Support
 
-#### 可选：Starscream WebSocket 自动监控
-
-核心库零第三方依赖。若你用 [Starscream](https://github.com/daltoniam/Starscream) 连 WebSocket，可启用近似零埋点的自动监控：
+If your project uses Starscream and you want automatic WebSocket receive/connect/disconnect logging:
 
 ```ruby
-pod 'SJLogger/Starscream'
+pod 'SJLogger/Starscream', '~> 0.4.0', :configurations => ['Debug']
 ```
 
-接入只需一行（用代理委托包裹原 delegate，原逻辑照常工作）：
+This adds:
 
-```swift
-// 持有 proxy，避免被释放
-self.sjProxy = SJLogger.starscreamProxy(url: "wss://example.com/ws", forwarding: self)
-socket.delegate = sjProxy
+```ruby
+pod 'Starscream', '~> 4.0'
 ```
 
-> 接收消息、连接、断开会自动记录；如需记录**发送**的消息，可在 `socket.write(...)` 处补一行：
-> `SJLogger.logWebSocketSent(url: "wss://example.com/ws", text: message)`
+## Quick Start
 
-## 使用方法
-
-### 1. 基础使用
-
-**重要**：
-- 使用 `#if DEBUG` 确保仅在 Debug 模式下启用
-- 在设置根控制器后调用 `start()`
-- 在切换 TabBar 或重新设置根控制器时也需要调用
+Start SJLogger after your root view controller is ready.
 
 ```swift
 #if DEBUG
 import SJLogger
 #endif
 
-// SwiftUI App
-@main
-struct MyApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .onAppear {
-                    #if DEBUG
-                    // 在视图出现后启动SJLogger
-                    SJLogger.shared.start()
-                    #endif
-                }
-        }
-    }
-}
+func scene(_ scene: UIScene,
+           willConnectTo session: UISceneSession,
+           options connectionOptions: UIScene.ConnectionOptions) {
+    guard let windowScene = scene as? UIWindowScene else { return }
 
-// UIKit App - SceneDelegate
-func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
-    guard let windowScene = (scene as? UIWindowScene) else { return }
-    
     window = UIWindow(windowScene: windowScene)
     window?.rootViewController = UINavigationController(rootViewController: ViewController())
     window?.makeKeyAndVisible()
-    
-    #if DEBUG
-    // ⚠️ 设置根控制器后立即启动SJLogger
-    SJLogger.shared.start()
-    #endif
-}
 
-// 切换TabBar或重新设置根控制器时
-func switchToMainTabBar() {
-    let tabBarController = UITabBarController()
-    // ... 配置TabBar
-    
-    window?.rootViewController = tabBarController
-    
     #if DEBUG
-    // ⚠️ 重新设置根控制器后，需要再次调用start()
     SJLogger.shared.start()
     #endif
 }
 ```
 
-**注意**：
-- ⚠️ **每次设置根控制器后都需要调用 `start()`**（包括切换TabBar、退出登录等场景）
-- ✅ `start()` 方法可以多次调用，内部会自动处理重复调用
-- ✅ 每次调用都会更新悬浮窗状态，确保悬浮窗正确显示
-- ✅ **即使延迟调用 `start()`，也能监听到所有网络请求**（Method Swizzling 在首次访问 `SJLogger.shared` 时自动执行）
-
-### 2. 自定义配置
+If your app replaces `window.rootViewController` later, call `start()` again after replacement. The method is safe to call multiple times.
 
 ```swift
 #if DEBUG
-// 启动SJLogger
+SJLogger.shared.start()
+#endif
+```
+
+## Configuration
+
+```swift
+#if DEBUG
 SJLogger.shared.start { config in
-    // 配置日志记录
     config.isEnabled = true
-    config.maxLogCount = 500
+    config.showFloatingWindow = true
+
     config.logRequestBody = true
     config.logResponseBody = true
-    config.enableWebSocketLog = false
-    config.showFloatingWindow = true
+    config.maxResponseBodySize = 1024 * 1024
+
+    config.enableWebSocketLog = true
     config.printToConsole = false
-    
-    // 不设置 addMonitoredURL 则监控所有请求
-    // 如果需要只监控特定URL，可以添加：
-    config.addMonitoredURL(pattern: "api.example.com")
-    // config.addMonitoredURL(pattern: ".*\\.myapi\\.com/.*")
-    
-    // 添加需要忽略的URL模式
+
+    // Persist logs to disk. Enabled by default in 0.4.0.
+    config.persistLogs = true
+    config.maxPersistedLogFileSize = 10 * 1024 * 1024
+
+    // Monitor all URLs by default. Add patterns only when you need a whitelist.
+    // config.addMonitoredURL(pattern: "api.example.com")
+
+    // Ignore noisy assets or endpoints.
     config.addIgnoredURL(pattern: ".*\\.png$")
     config.addIgnoredURL(pattern: ".*\\.jpg$")
     config.addIgnoredURL(pattern: ".*\\.gif$")
-    config.addIgnoredURL(pattern: ".*\\.jpeg$")
 }
 #endif
 ```
 
-### 3. 手动显示日志界面
+## Open UI Manually
 
 ```swift
 #if DEBUG
-// 从当前视图控制器显示日志列表
-SJLogger.shared.showLogList(from: self)
-
-// 或者自动查找顶层视图控制器
 SJLogger.shared.showLogList()
+SJLogger.shared.showLogList(from: viewController)
+SJLogger.shared.showSettings(from: viewController)
 #endif
 ```
 
-### 4. 日志管理
+## Export Logs
 
 ```swift
-// 清除所有日志
-SJLogger.shared.clearLogs()
-
-// 导出所有日志
-SJLogger.shared.exportLogs { logText in
-    print(logText)
-    // 可以保存到文件或分享
-}
-
-// 获取日志统计信息
-SJLogger.shared.getStatistics { stats in
-    print("Total logs: \(stats["total"] ?? 0)")
-    print("Success: \(stats["success"] ?? 0)")
-    print("Failed: \(stats["failed"] ?? 0)")
+SJLogger.shared.exportLogs { text in
+    print(text)
 }
 ```
 
-### 6. 悬浮窗控制
+In the UI:
+
+- The list export button exports all current logs.
+- In selection mode, it exports selected logs only.
+- Detail page supports copy, share, cURL, and HAR actions.
+- Settings page can view/export persisted logs.
+
+## Persistence
+
+SJLogger keeps two concepts separate:
+
+- Current logs: shown by default when opening the logger UI.
+- Persisted logs: stored on disk and available from Settings.
+
+Persistence is enabled by default. Disk usage is limited by `maxPersistedLogFileSize`; when the file exceeds the limit, older logs are dropped first.
 
 ```swift
-// 显示悬浮窗
-SJLogger.shared.showFloatingWindow()
-
-// 隐藏悬浮窗
-SJLogger.shared.hideFloatingWindow()
+SJLogger.shared.start { config in
+    config.persistLogs = true
+    config.maxPersistedLogFileSize = 20 * 1024 * 1024
+}
 ```
 
-### 7. 停止日志记录
+Long pressing the floating button clears current in-memory logs only. Persisted logs are cleared explicitly from Settings.
+
+## Decrypt Request And Response Bodies
+
+If your request or response body is encrypted, provide a display decryptor. The raw captured data is passed in, and your closure returns the string shown in the UI/export.
+
+Built-in AES-CBC-PKCS7 helper:
 
 ```swift
-// 停止SJLogger
-SJLogger.shared.stop()
+SJLogger.shared.start { config in
+    config.setAESBodyDecryptor(key: "1234567890123456", iv: "1234567890123456")
+}
 ```
 
-## 高级功能
-
-### 日志搜索和过滤
-
-在日志列表界面中：
-- 使用搜索栏搜索URL、方法、请求/响应内容
-- 点击过滤按钮选择：全部、成功请求、失败请求、按类型过滤
-- 左滑日志项可以删除或分享单条日志
-
-### 日志详情
-
-点击任意日志查看详细信息：
-- 基本信息（URL、方法、状态码、耗时等）
-- 请求头和请求体（支持JSON格式化）
-- 响应头和响应体（支持JSON格式化）
-- 支持复制和分享完整日志
-
-### 多选导出
-
-1. 点击左上角"选择"按钮进入编辑模式
-2. 点击要导出的日志（会显示 ✓ 标记）
-3. 点击导出按钮导出选中的日志
-4. 点击"取消"退出编辑模式
-
-**提示**：
-- 普通模式下点击导出按钮会导出全部日志
-- 编辑模式下点击导出按钮只导出选中的日志
-
-## WebSocket 日志记录
-
-SJLogger 支持手动记录 WebSocket 事件：
+Custom decryptor:
 
 ```swift
-import SJLogger
-
-// 连接建立
-SJLogger.logWebSocket(url: "wss://example.com/socket", event: .connected(headers: [:]))
-
-// 接收文本消息
-SJLogger.logWebSocket(url: "wss://example.com/socket", event: .text("Hello"))
-
-// 发送文本消息
-SJLogger.logWebSocket(url: "wss://example.com/socket", event: .text("World"))
-
-// 连接断开
-SJLogger.logWebSocket(url: "wss://example.com/socket", event: .disconnected(code: 1000, reason: "Normal"))
-
-// 错误
-SJLogger.logWebSocket(url: "wss://example.com/socket", event: .error(NSError(...)))
-```
-
-### 与 Starscream 集成示例
-
-```swift
-import Starscream
-import SJLogger
-
-extension ChatSocketManager: WebSocketDelegate {
-    func didReceive(event: WebSocketEvent, client: any WebSocketClient) {
-        let url = "wss://example.com/socket"
-        
-        // 转发事件到SJLogger
-        switch event {
-        case .connected(let headers):
-            SJLogger.logWebSocket(url: url, event: .connected(headers))
-            
-        case .text(let string):
-            SJLogger.logWebSocket(url: url, event: .text(string))
-            
-        case .binary(let data):
-            SJLogger.logWebSocket(url: url, event: .binary(data))
-            
-        case .disconnected(let reason, let code):
-            SJLogger.logWebSocket(url: url, event: .disconnected(reason, code))
-            
-        case .error(let error):
-            SJLogger.logWebSocket(url: url, event: .error(error))
-            
-        case .ping(let data):
-            SJLogger.logWebSocket(url: url, event: .ping(data))
-            
-        case .pong(let data):
-            SJLogger.logWebSocket(url: url, event: .pong(data))
-            
-        case .viabilityChanged(let isViable):
-            SJLogger.logWebSocket(url: url, event: .viabilityChanged(isViable))
-            
-        case .reconnectSuggested(let shouldReconnect):
-            SJLogger.logWebSocket(url: url, event: .reconnectSuggested(shouldReconnect))
-            
-        case .cancelled:
-            SJLogger.logWebSocket(url: url, event: .cancelled)
-            
-        case .peerClosed:
-            SJLogger.logWebSocket(url: url, event: .peerClosed)
-        }
+SJLogger.shared.start { config in
+    config.setBodyDecryptor { data in
+        // Return nil to fall back to UTF-8/hex display.
+        return String(data: data, encoding: .utf8)
     }
 }
 ```
 
-#### WebSocket 日志记录 API
+The AES helper tries to treat body data as Base64 first, then falls back to raw bytes. Supported AES key lengths are 16, 24, or 32 bytes.
 
-只需要一个方法：
-- `SJLogger.logWebSocket(url:event:)` - 记录所有WebSocket事件
+## WebSocket
 
-支持的事件类型（`SJWebSocketEvent`）：
-- `.connected([String: String])` - 连接建立
-- `.disconnected(String, UInt16)` - 断开连接
-- `.text(String)` - 文本消息
-- `.binary(Data)` - 二进制消息
-- `.error(Error?)` - 错误
-- `.ping(Data?)` / `.pong(Data?)` - 心跳
-- `.viabilityChanged(Bool)` - 连接可用性变化
-- `.reconnectSuggested(Bool)` - 重连建议
-- `.cancelled` - 取消
-- `.peerClosed` - 对端关闭
+### Manual Logging
 
-## 注意事项
+Core SJLogger can log WebSocket events without depending on any WebSocket library:
 
-1. **仅在Debug模式使用**：建议仅在Debug模式下启用SJLogger，避免在Release版本中使用
-2. **内存管理**：设置合理的`maxLogCount`避免内存占用过大
-3. **敏感信息**：注意日志中可能包含敏感信息，不要随意分享
-4. **性能影响**：日志记录会有轻微的性能影响，但已优化到最小
-5. **第三方库**：使用Moya、Alamofire等第三方网络库时，需要手动配置Session
+```swift
+import SJLogger
 
-## 示例项目
+SJLogger.logWebSocket(url: "wss://example.com/socket", event: .connected([:]))
+SJLogger.logWebSocket(url: "wss://example.com/socket", event: .text("hello"))
+SJLogger.logWebSocket(url: "wss://example.com/socket", event: .disconnected("normal", 1000))
+SJLogger.logWebSocket(url: "wss://example.com/socket", event: .error(error))
 
-运行示例项目：
+SJLogger.logWebSocketSent(url: "wss://example.com/socket", text: "client message")
+```
+
+### Starscream
+
+Install:
+
+```ruby
+pod 'SJLogger/Starscream', '~> 0.4.0'
+```
+
+Wrap your original delegate with `SJStarscreamProxy`. Your original delegate still receives events because the proxy forwards them after logging.
+
+```swift
+import SJLogger
+import Starscream
+
+final class ChatSocketManager: NSObject, WebSocketDelegate {
+    private var socket: WebSocket?
+    private var loggerProxy: SJStarscreamProxy?
+    private let urlString = "wss://example.com/socket"
+
+    func connect() {
+        let request = URLRequest(url: URL(string: urlString)!)
+        let socket = WebSocket(request: request)
+
+        let proxy = SJLogger.starscreamProxy(url: urlString, forwarding: self)
+        loggerProxy = proxy
+
+        socket.delegate = proxy
+        socket.connect()
+
+        self.socket = socket
+    }
+
+    func didReceive(event: WebSocketEvent, client: WebSocketClient) {
+        // Your original business logic still runs here.
+    }
+
+    func send(_ text: String) {
+        socket?.write(string: text)
+        SJLogger.logWebSocketSent(url: urlString, text: text)
+    }
+}
+```
+
+Important:
+
+- Keep a strong reference to `loggerProxy`.
+- Do not assign another object to `socket.delegate` after installing the proxy.
+- Starscream delegate events cover receive/connect/disconnect/error. Send direction should be logged where you call `write`.
+
+## UI Guide
+
+- Floating button: tap to open logs, long press to clear current logs.
+- Top stats: total count, success rate, average duration, traffic.
+- Request tab: individual request/event records.
+- Endpoint tab: grouped API paths with count, success rate, and average duration.
+- Search: URL, method, headers, body, and response content.
+- Filter: type, method, status bucket, slow request, failed only.
+- Detail: headers, body, error, timing, copy/share/export.
+- Settings: collection switches, persistence, slow threshold, view/export persisted logs.
+
+## API Overview
+
+```swift
+SJLogger.shared.start()
+SJLogger.shared.stop()
+
+SJLogger.shared.showFloatingWindow()
+SJLogger.shared.hideFloatingWindow()
+
+SJLogger.shared.showLogList()
+SJLogger.shared.showSettings()
+
+SJLogger.shared.clearLogs()
+SJLogger.shared.exportLogs { text in }
+SJLogger.shared.getStatistics { stats in }
+
+SJLogger.logWebSocket(url: "wss://...", event: .text("..."))
+SJLogger.logWebSocketSent(url: "wss://...", text: "...")
+```
+
+## Notes
+
+- Use this library in Debug or internal test builds.
+- Logs may contain tokens, cookies, user data, or private API payloads.
+- Avoid shipping verbose network logging in production unless your privacy and security review allows it.
+- Some custom `URLSessionConfiguration` or third-party networking setups may need verification in your app.
+- Body logging and disk persistence can increase memory/disk usage for very large payloads. Set size limits appropriately.
+
+## Example
 
 ```bash
 cd Example
@@ -360,41 +327,56 @@ pod install
 open SJLogger.xcworkspace
 ```
 
-## 架构设计
+## Project Structure
 
-```
+```text
 SJLogger
-├── Models          # 数据模型
-│   ├── SJLoggerModel.swift      # 日志数据模型
-│   └── SJLoggerConfig.swift     # 配置模型
-├── Core            # 核心功能
-│   ├── SJURLProtocol.swift      # 网络拦截器
-│   ├── SJURLSessionSwizzler.swift # Method Swizzling
-│   └── SJLoggerStorage.swift    # 日志存储管理
-├── UI              # 用户界面
-│   ├── SJLogListViewController.swift   # 日志列表
-│   ├── SJLogCell.swift                 # 列表Cell
-│   ├── SJLogDetailViewController.swift # 日志详情
-│   └── SJFloatingWindow.swift          # 悬浮窗
-└── SJLogger.swift  # 主入口类
+├── Core
+│   ├── SJURLProtocol.swift
+│   ├── SJURLSessionSwizzler.swift
+│   ├── SJLoggerStorage.swift
+│   └── SJLogExporter.swift
+├── Extensions
+│   ├── SJLogger+WebSocket.swift
+│   └── SJStarscreamAdapter.swift
+├── Models
+│   ├── SJLoggerModel.swift
+│   ├── SJLoggerConfig.swift
+│   ├── SJLogQuery.swift
+│   └── SJEndpointGroup.swift
+├── UI
+│   ├── SJLogListViewController.swift
+│   ├── SJLogDetailViewController.swift
+│   ├── SJLogFilterViewController.swift
+│   ├── SJLoggerSettingsViewController.swift
+│   ├── SJEndpointListViewController.swift
+│   ├── SJFloatingWindow.swift
+│   └── SJUIComponents.swift
+└── SJLogger.swift
 ```
 
-## 更新日志
+## Changelog
 
-### Version 0.3.0
-- 初始版本发布
-- 支持HTTP/HTTPS请求拦截
-- 完整的UI界面
-- 日志搜索、过滤、复制、分享功能
+### 0.4.0
 
-## 贡献
+- Added custom in-app navigation UI.
+- Added endpoint grouping, stats bar, advanced filter, and frozen refresh mode.
+- Added JSON highlighting, cURL/HAR export, and multi-select export.
+- Added disk persistence with maximum storage size.
+- Added settings page for runtime configuration and persisted log management.
+- Added AES/custom body decryptor support.
+- Added optional `SJLogger/Starscream` subspec.
+- Improved floating button behavior and current-log clearing.
 
-欢迎提交Issue和Pull Request！
+### 0.3.0
 
-## 作者
+- HTTP/HTTPS capture.
+- Log list, detail, search, copy, share, and floating entry.
 
-shengjie, shengjie
+## Author
 
-## 许可证
+Shengjie
 
-SJLogger is available under the MIT license. See the LICENSE file for more info.
+## License
+
+SJLogger is available under the MIT license. See the LICENSE file for details.
