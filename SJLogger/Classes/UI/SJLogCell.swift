@@ -171,9 +171,14 @@ class SJLogCell: UITableViewCell {
             typeLabel.textColor = .systemGreen
         }
         
-        // 方法
+        // 方法 / WebSocket方向
         if let method = log.method {
             methodLabel.text = method.rawValue
+            methodLabel.textColor = SJTheme.color(for: method)
+            methodLabel.isHidden = false
+        } else if log.type == .websocket, let dir = log.wsDirection {
+            methodLabel.text = dir.rawValue
+            methodLabel.textColor = dir == .sent ? .systemBlue : .systemGreen
             methodLabel.isHidden = false
         } else {
             methodLabel.isHidden = true
@@ -203,11 +208,20 @@ class SJLogCell: UITableViewCell {
         formatter.dateFormat = "HH:mm:ss"
         timeLabel.text = formatter.string(from: log.startTime)
         
-        // 耗时
+        // 耗时（慢请求高亮）
         if let duration = log.duration {
             durationLabel.text = "\(Int(duration))ms"
+            if duration >= SJLoggerConfig.shared.slowRequestThresholdMs {
+                durationLabel.textColor = .systemOrange
+                durationLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+            } else {
+                durationLabel.textColor = .secondaryLabel
+                durationLabel.font = .systemFont(ofSize: 11)
+            }
         } else {
             durationLabel.text = "-"
+            durationLabel.textColor = .secondaryLabel
+            durationLabel.font = .systemFont(ofSize: 11)
         }
     }
 }

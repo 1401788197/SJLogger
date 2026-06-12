@@ -1,8 +1,9 @@
 import UIKit
 
 // MARK: - 悬浮窗
-/// 小圆圈悬浮窗，显示未读日志数量，可拖动，点击打开日志列表，长按清除所有日志
+/// 小圆圈悬浮窗，显示未读日志数量，可拖动，点击打开日志列表，长按清除当前日志
 class SJFloatingWindow: UIView {
+    private static let diameter: CGFloat = 36
     
     // MARK: - 属性
     
@@ -15,11 +16,11 @@ class SJFloatingWindow: UIView {
     
     private let circleView: UIView = {
         let view = UIView()
-        view.layer.cornerRadius = 12.5
+        view.layer.cornerRadius = SJFloatingWindow.diameter / 2
         view.layer.shadowColor = UIColor.black.cgColor
-        view.layer.shadowOffset = CGSize(width: 0, height: 1)
-        view.layer.shadowRadius = 3
-        view.layer.shadowOpacity = 0.3
+        view.layer.shadowOffset = CGSize(width: 0, height: 2)
+        view.layer.shadowRadius = 5
+        view.layer.shadowOpacity = 0.35
         return view
     }()
     
@@ -27,7 +28,9 @@ class SJFloatingWindow: UIView {
         let label = UILabel()
         label.textColor = .white
         label.adjustsFontSizeToFitWidth = true
+        label.minimumScaleFactor = 0.5
         label.textAlignment = .center
+        label.font = .systemFont(ofSize: 13, weight: .bold)
         label.text = "0"
         return label
     }()
@@ -35,7 +38,7 @@ class SJFloatingWindow: UIView {
     // MARK: - 初始化
     
     init() {
-        super.init(frame: CGRect(x: 0, y: 0, width: 25, height: 25))
+        super.init(frame: CGRect(x: 0, y: 0, width: Self.diameter, height: Self.diameter))
         setupUI()
         setupGestures()
         observeLogUpdates()
@@ -106,8 +109,8 @@ class SJFloatingWindow: UIView {
         bringToFront()
         
         // 初始位置：右下角
-        let x = window.bounds.width - 45
-        let y = window.bounds.height - 150
+        let x = window.bounds.width - Self.diameter - 10
+        let y = window.bounds.height - 160
         self.frame.origin = CGPoint(x: x, y: y)
         
         // 动画显示
@@ -188,16 +191,24 @@ class SJFloatingWindow: UIView {
             }
         }
         
-        // 弹出确认对话框
-        guard let topVC = getTopViewController() else { return }
-        
-        let alert = UIAlertController(title: "清除所有日志", message: "确定要清除所有日志吗？此操作不可恢复。", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "清除", style: .destructive) { _ in
-            SJLoggerStorage.shared.clearAllLogs()
-        })
-        
-        topVC.present(alert, animated: true)
+        SJLoggerStorage.shared.clearCurrentLogs()
+        showClearedFeedback()
+    }
+    
+    private func showClearedFeedback() {
+        countLabel.text = "0"
+        let originalColor = circleView.backgroundColor
+        circleView.backgroundColor = .systemGreen
+        countLabel.text = "✓"
+        UIView.animate(withDuration: 0.18, animations: {
+            self.transform = CGAffineTransform(scaleX: 1.18, y: 1.18)
+        }) { _ in
+            UIView.animate(withDuration: 0.18, delay: 0.45) {
+                self.transform = .identity
+                self.circleView.backgroundColor = originalColor
+                self.countLabel.text = "0"
+            }
+        }
     }
     
     // MARK: - 吸附到边缘
@@ -271,32 +282,7 @@ class SJFloatingWindow: UIView {
             guard let self = self else { return }
             
             let count = logs.count
-            self.countLabel.text = count > 999 ? "999+" : "\(count)"
+            self.countLabel.text = count > 99 ? "99+" : "\(count)"
         }
-    }
-    
-    // MARK: - 获取顶层视图控制器
-    
-    private func getTopViewController() -> UIViewController? {
-        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let window = windowScene.windows.first(where: { $0.isKeyWindow }),
-              let rootVC = window.rootViewController else {
-            return nil
-        }
-        
-        var topVC = rootVC
-        while let presentedVC = topVC.presentedViewController {
-            topVC = presentedVC
-        }
-        
-        if let navVC = topVC as? UINavigationController {
-            return navVC.viewControllers.last
-        }
-        
-        if let tabVC = topVC as? UITabBarController {
-            return tabVC.selectedViewController
-        }
-        
-        return topVC
     }
 }

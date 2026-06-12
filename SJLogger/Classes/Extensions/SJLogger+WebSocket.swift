@@ -64,6 +64,32 @@ public extension SJLogger {
         }
     }
     
+    /// 记录WebSocket发送的文本消息（手动调用，用于补充发送方向）
+    static func logWebSocketSent(url: String, text: String) {
+        guard SJLoggerConfig.shared.enableWebSocketLog else { return }
+        let log = SJLoggerModel(type: .websocket, url: url)
+        log.requestBody = text.data(using: .utf8)
+        log.statusCode = 200
+        log.wsDirection = .sent
+        log.wsEventName = "Send (Text)"
+        log.tcpInfo = "WebSocket Send (Text) - Length: \(text.count)"
+        log.endTime = Date()
+        SJLoggerStorage.shared.addLog(log)
+    }
+    
+    /// 记录WebSocket发送的二进制消息
+    static func logWebSocketSent(url: String, data: Data) {
+        guard SJLoggerConfig.shared.enableWebSocketLog else { return }
+        let log = SJLoggerModel(type: .websocket, url: url)
+        log.requestBody = data
+        log.statusCode = 200
+        log.wsDirection = .sent
+        log.wsEventName = "Send (Binary)"
+        log.tcpInfo = "WebSocket Send (Binary) - Size: \(data.count) bytes"
+        log.endTime = Date()
+        SJLoggerStorage.shared.addLog(log)
+    }
+    
     // MARK: - 内部处理方法
     
     private static func logConnected(url: String, headers: [String: String]) {
@@ -117,6 +143,8 @@ public extension SJLogger {
         
         log.responseBody = message.data(using: .utf8)
         log.statusCode = 200
+        log.wsDirection = .received
+        log.wsEventName = "Recv (Text)"
         log.tcpInfo = "WebSocket Message (Text) - Length: \(message.count)"
         log.endTime = Date()
         
@@ -136,6 +164,8 @@ public extension SJLogger {
         
         log.responseBody = data
         log.statusCode = 200
+        log.wsDirection = .received
+        log.wsEventName = "Recv (Binary)"
         log.tcpInfo = "WebSocket Message (Binary) - Size: \(data.count) bytes"
         log.endTime = Date()
         

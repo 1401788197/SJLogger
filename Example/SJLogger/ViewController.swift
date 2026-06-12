@@ -15,6 +15,51 @@ class ViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         setupUI()
+        runSelfTestIfNeeded()
+    }
+    
+    // MARK: - 自测入口（仅当设置环境变量 SJ_SELFTEST 时触发）
+    
+    private func runSelfTestIfNeeded() {
+        let env = ProcessInfo.processInfo.environment
+        guard env["SJ_SELFTEST"] == "1" else { return }
+        seedSampleLogs()
+        let screen = env["SJ_SCREEN"] ?? "list"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            switch screen {
+            case "settings":
+                SJLogger.shared.showSettings(from: self)
+            case "filter":
+                let vc = SJLogFilterViewController(query: SJLogQuery())
+                self.present(UINavigationController(rootViewController: vc), animated: true)
+            default:
+                SJLogger.shared.showLogList(from: self)
+            }
+        }
+    }
+    
+    private func seedSampleLogs() {
+        func mk(_ type: SJLogType, _ method: SJHTTPMethod?, _ url: String, status: Int?, ms: Double, req: String? = nil, resp: String? = nil, ws: SJWSDirection? = nil, event: String? = nil) {
+            let start = Date().addingTimeInterval(-ms/1000.0)
+            let log = SJLoggerModel(type: type, url: url, method: method, requestBody: req?.data(using: .utf8), startTime: start)
+            log.statusCode = status
+            log.responseBody = resp?.data(using: .utf8)
+            log.responseHeaders = ["Content-Type": "application/json"]
+            log.endTime = Date()
+            log.wsDirection = ws
+            log.wsEventName = event
+            SJLogger.shared.storage.addLog(log)
+        }
+        let json = "{\"code\":0,\"data\":{\"id\":123,\"name\":\"SJLogger\",\"tags\":[\"a\",\"b\"],\"ok\":true},\"msg\":null}"
+        mk(.https, .get, "https://api.example.com/api/user/profile", status: 200, ms: 120, resp: json)
+        mk(.https, .get, "https://api.example.com/api/user/profile", status: 200, ms: 340, resp: json)
+        mk(.https, .post, "https://api.example.com/api/user/login", status: 200, ms: 95, req: "{\"u\":\"a\",\"p\":\"b\"}", resp: json)
+        mk(.https, .post, "https://api.example.com/api/user/login", status: 401, ms: 60, resp: "{\"err\":\"bad\"}")
+        mk(.https, .get, "https://api.example.com/api/feed/list", status: 500, ms: 2300, resp: "{\"err\":\"server\"}")
+        mk(.https, .get, "https://api.example.com/api/feed/list", status: 200, ms: 1800, resp: json)
+        mk(.http, .delete, "https://api.example.com/api/item/9", status: 204, ms: 70)
+        mk(.websocket, nil, "wss://ws.example.com/live", status: 200, ms: 5, resp: "{\"type\":\"tick\"}", ws: .received, event: "Recv (Text)")
+        mk(.websocket, nil, "wss://ws.example.com/live", status: 200, ms: 5, req: "{\"act\":\"sub\"}", ws: .sent, event: "Send (Text)")
     }
     
     private func setupUI() {

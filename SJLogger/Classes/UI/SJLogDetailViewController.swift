@@ -10,6 +10,10 @@ public class SJLogDetailViewController: UIViewController {
     
     // MARK: - UI组件
     
+    private lazy var customNavigationBar: SJCustomNavigationBar = {
+        return SJCustomNavigationBar(title: "日志详情")
+    }()
+    
     private lazy var scrollView: UIScrollView = {
         let scroll = UIScrollView()
         scroll.backgroundColor = .systemBackground
@@ -26,19 +30,40 @@ public class SJLogDetailViewController: UIViewController {
         return stack
     }()
     
-    private lazy var copyButton: UIBarButtonItem = {
-        return UIBarButtonItem(image: UIImage(systemName: "doc.on.doc"),
-                              style: .plain,
-                              target: self,
-                              action: #selector(copyLog))
+    private lazy var copyButton: UIButton = {
+        return SJCustomNavigationBar.iconButton(systemName: "doc.on.doc",
+                                                target: self,
+                                                action: #selector(copyLog))
     }()
     
-    private lazy var shareButton: UIBarButtonItem = {
-        return UIBarButtonItem(image: UIImage(systemName: "square.and.arrow.up"),
-                              style: .plain,
-                              target: self,
-                              action: #selector(shareLog))
+    private lazy var shareButton: UIButton = {
+        return SJCustomNavigationBar.iconButton(systemName: "square.and.arrow.up",
+                                                target: self,
+                                                action: #selector(shareLog))
     }()
+    
+    private lazy var exportButton: UIButton = {
+        return SJCustomNavigationBar.iconButton(systemName: "arrow.down.doc",
+                                                target: self,
+                                                action: #selector(showExportOptions))
+    }()
+    
+    private func makeExportMenu() -> UIMenu {
+        let curl = UIAction(title: "复制为 cURL", image: UIImage(systemName: "terminal")) { [weak self] _ in
+            guard let self = self else { return }
+            UIPasteboard.general.string = SJLogExporter.curl(for: self.log)
+            self.showToast("已复制 cURL 命令")
+        }
+        let har = UIAction(title: "导出 HAR", image: UIImage(systemName: "doc.badge.gearshape")) { [weak self] _ in
+            guard let self = self else { return }
+            let text = SJLogExporter.har(for: [self.log])
+            let vc = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+            vc.popoverPresentationController?.sourceView = self.exportButton
+            vc.popoverPresentationController?.sourceRect = self.exportButton.bounds
+            self.present(vc, animated: true)
+        }
+        return UIMenu(title: "导出", children: [curl, har])
+    }
     
     // MARK: - 初始化
     
@@ -59,29 +84,36 @@ public class SJLogDetailViewController: UIViewController {
         loadLogDetails()
     }
     
+    public override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        navigationController?.setNavigationBarHidden(true, animated: false)
+    }
+    
     // MARK: - UI设置
     
     private func setupUI() {
         title = "日志详情"
         view.backgroundColor = .systemBackground
         
-        // 导航栏按钮 - 添加间距适配UINavigation-SXFixSpace
-        if needsNavigationBarSpacing() {
-            let rightSpacer = UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
-            rightSpacer.width = -8
-            navigationItem.rightBarButtonItems = [rightSpacer, shareButton, copyButton]
-        } else {
-            navigationItem.rightBarButtonItems = [shareButton, copyButton]
-        }
+        customNavigationBar.setLeftButtons([
+            SJCustomNavigationBar.iconButton(systemName: "chevron.left", target: self, action: #selector(backAction))
+        ])
+        customNavigationBar.setRightButtons([shareButton, exportButton, copyButton])
         
+        view.addSubview(customNavigationBar)
         view.addSubview(scrollView)
         scrollView.addSubview(contentStackView)
         
+        customNavigationBar.translatesAutoresizingMaskIntoConstraints = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         contentStackView.translatesAutoresizingMaskIntoConstraints = false
         
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            customNavigationBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            customNavigationBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            customNavigationBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            
+            scrollView.topAnchor.constraint(equalTo: customNavigationBar.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -161,18 +193,19 @@ public class SJLogDetailViewController: UIViewController {
         let sectionView = createSectionView(title: title)
         
         let textView = UITextView()
-        textView.text = content
-        textView.font = .monospacedSystemFont(ofSize: isJSON ? 11 : 12, weight: .regular)
-        textView.textColor = color
         textView.backgroundColor = .secondarySystemBackground
         textView.layer.cornerRadius = 8
         textView.isEditable = false
         textView.isScrollEnabled = false
         textView.textContainerInset = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
         
-        // JSON语法高亮（简单实现）
+        // JSON语法高亮
         if isJSON {
-            textView.textColor = .systemGreen
+            textView.attributedText = SJSyntaxHighlighter.highlight(content, fontSize: 12)
+        } else {
+            textView.text = content
+            textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+            textView.textColor = color
         }
         
         if copyable {
@@ -237,6 +270,33 @@ public class SJLogDetailViewController: UIViewController {
     
     // MARK: - Actions
     
+    @objc private func backAction() {
+        navigationController?.popViewController(animated: true)
+    }
+    
+    @objc private func showExportOptions() {
+        let alert = UIAlertController(title: "导出", message: nil, preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: "复制为 cURL", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            UIPasteboard.general.string = SJLogExporter.curl(for: self.log)
+            self.showToast("已复制 cURL 命令")
+        })
+        alert.addAction(UIAlertAction(title: "导出 HAR", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            let text = SJLogExporter.har(for: [self.log])
+            let vc = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+            vc.popoverPresentationController?.sourceView = self.exportButton
+            vc.popoverPresentationController?.sourceRect = self.exportButton.bounds
+            self.present(vc, animated: true)
+        })
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = exportButton
+            popover.sourceRect = exportButton.bounds
+        }
+        present(alert, animated: true)
+    }
+    
     @objc private func copyLog() {
         let text = log.generateLogText()
         UIPasteboard.general.string = text
@@ -248,7 +308,8 @@ public class SJLogDetailViewController: UIViewController {
         let activityVC = UIActivityViewController(activityItems: [text], applicationActivities: nil)
         
         if let popover = activityVC.popoverPresentationController {
-            popover.barButtonItem = shareButton
+            popover.sourceView = shareButton
+            popover.sourceRect = shareButton.bounds
         }
         
         present(activityVC, animated: true)
@@ -291,12 +352,5 @@ public class SJLogDetailViewController: UIViewController {
             return prettyJSON
         }
         return string
-    }
-    
-    /// 检测是否需要添加导航栏间距
-    private func needsNavigationBarSpacing() -> Bool {
-        guard let navBar = navigationController?.navigationBar else { return false }
-        let defaultMargin: CGFloat = 16
-        return navBar.layoutMargins.left < defaultMargin || navBar.layoutMargins.right < defaultMargin
     }
 }

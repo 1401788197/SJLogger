@@ -103,7 +103,23 @@ public class SJLogger {
             let logListVC = SJLogListViewController()
             let nav = UINavigationController(rootViewController: logListVC)
             nav.modalPresentationStyle = .fullScreen
+            nav.setNavigationBarHidden(true, animated: false)
             
+            if let vc = viewController {
+                vc.present(nav, animated: true)
+            } else if let topVC = self.topViewController() {
+                topVC.present(nav, animated: true)
+            }
+        }
+    }
+    
+    /// 显示设置界面
+    /// - Parameter from: 从哪个视图控制器present
+    public func showSettings(from viewController: UIViewController? = nil) {
+        DispatchQueue.main.async {
+            let settingsVC = SJLoggerSettingsViewController()
+            let nav = UINavigationController(rootViewController: settingsVC)
+            nav.setNavigationBarHidden(true, animated: false)
             if let vc = viewController {
                 vc.present(nav, animated: true)
             } else if let topVC = self.topViewController() {
@@ -126,9 +142,9 @@ public class SJLogger {
     
     // MARK: - 便捷方法
     
-    /// 清除所有日志
+    /// 清除当前内存日志，持久化日志需在设置页主动清除
     public func clearLogs() {
-        SJLoggerStorage.shared.clearAllLogs()
+        SJLoggerStorage.shared.clearCurrentLogs()
     }
     
     /// 导出所有日志
@@ -195,5 +211,32 @@ public extension SJLogger {
     /// 启用/禁用WebSocket日志
     func setWebSocketLogEnabled(_ enabled: Bool) {
         config.enableWebSocketLog = enabled
+    }
+    
+    /// 设置默认刷新模式（动态/固定）
+    func setRefreshMode(_ mode: SJRefreshMode) {
+        config.defaultRefreshMode = mode
+    }
+    
+    /// 启用/禁用日志持久化（App重启不丢失）
+    func setPersistLogs(_ enabled: Bool) {
+        config.persistLogs = enabled
+    }
+    
+    /// 设置 AES-CBC-PKCS7 请求/响应体解密器
+    func setAESBodyDecryptor(key: String, iv: String? = nil) {
+        config.setAESBodyDecryptor(key: key, iv: iv)
+    }
+    
+    /// 设置自定义请求/响应体解密器
+    func setBodyDecryptor(_ decryptor: ((Data) -> String?)?) {
+        config.setBodyDecryptor(decryptor)
+    }
+    
+    /// 导出所有日志为 HAR 格式
+    func exportHAR(completion: @escaping (String) -> Void) {
+        SJLoggerStorage.shared.getAllLogs { logs in
+            completion(SJLogExporter.har(for: logs))
+        }
     }
 }

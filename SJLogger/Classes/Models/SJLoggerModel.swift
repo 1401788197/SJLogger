@@ -10,6 +10,14 @@ public enum SJLogType: String, Codable {
     case websocket = "WebSocket"
 }
 
+// MARK: - WebSocket消息方向
+/// WebSocket消息方向（发送/接收/系统事件）
+public enum SJWSDirection: String, Codable {
+    case sent = "SENT"
+    case received = "RECV"
+    case system = "SYS"
+}
+
 // MARK: - 请求方法
 /// HTTP请求方法
 public enum SJHTTPMethod: String, Codable {
@@ -61,17 +69,48 @@ public class SJLoggerModel: Codable {
     /// TCP连接信息
     public var tcpInfo: String?
     
+    /// WebSocket消息方向（仅WebSocket日志有效）
+    public var wsDirection: SJWSDirection?
+    
+    /// WebSocket事件名（如 Connected / Text / Disconnected）
+    public var wsEventName: String?
+    
+    // MARK: - URL解析
+    
+    /// 主机名（host），解析失败时返回原始url
+    public var host: String {
+        return URLComponents(string: url)?.host ?? ""
+    }
+    
+    /// 接口路径（忽略 scheme/host/query），如 /api/user/login
+    public var path: String {
+        if let comps = URLComponents(string: url), !comps.path.isEmpty {
+            return comps.path
+        }
+        // 解析失败时，去掉query后返回
+        if let q = url.firstIndex(of: "?") {
+            return String(url[..<q])
+        }
+        return url
+    }
+    
+    /// 用于列表展示的简短路径（path + 末尾query提示）
+    public var shortPath: String {
+        let p = path
+        return p.isEmpty ? url : p
+    }
+    
     // 计算属性
     /// 请求体字符串
     public var requestBodyString: String? {
         guard let data = requestBody else { return nil }
-        return String(data: data, encoding: .utf8) ?? data.hexString
+        return SJLoggerConfig.shared.displayString(forBody: data)
     }
     
     /// 响应体字符串
     public var responseBodyString: String? {
         guard let data = responseBody else { return nil }
-        return String(data: data, encoding: .utf8) ?? data.hexString
+        return SJLoggerConfig.shared.displayString(forBody: data)
     }
     
     /// 是否成功
