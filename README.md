@@ -61,13 +61,13 @@ SJLogger 是一个 iOS App 内网络日志调试工具，用于在 Debug/测试�
 推荐只在 Debug 配置中集成：
 
 ```ruby
-pod 'SJLogger', '~> 0.4.0', :configurations => ['Debug']
+pod 'SJLogger', '~> 0.5.0', :configurations => ['Debug']
 ```
 
 如果你希望所有配置都安装：
 
 ```ruby
-pod 'SJLogger', '~> 0.4.0'
+pod 'SJLogger', '~> 0.5.0'
 ```
 
 `pod 'SJLogger'` 默认只会安装 `SJLogger/Core`，不会引入 Starscream。
@@ -77,7 +77,7 @@ pod 'SJLogger', '~> 0.4.0'
 如果项目里使用 Starscream，并希望自动记录 WebSocket 连接、断开、接收消息、错误等事件：
 
 ```ruby
-pod 'SJLogger/Starscream', '~> 0.4.0', :configurations => ['Debug']
+pod 'SJLogger/Starscream', '~> 0.5.0', :configurations => ['Debug']
 ```
 
 这个子库会额外引入：
@@ -142,7 +142,7 @@ SJLogger.shared.start { config in
     // 是否打印到控制台
     config.printToConsole = false
 
-    // 持久化到磁盘，0.4.0 默认开启
+    // 持久化到磁盘，默认开启
     config.persistLogs = true
     config.maxPersistedLogFileSize = 10 * 1024 * 1024
 
@@ -260,7 +260,7 @@ SJLogger.logWebSocketSent(url: "wss://example.com/socket", text: "client message
 安装：
 
 ```ruby
-pod 'SJLogger/Starscream', '~> 0.4.0'
+pod 'SJLogger/Starscream', '~> 0.5.0'
 ```
 
 接入方式是用 `SJStarscreamProxy` 包一层你原来的 `WebSocketDelegate`。原来的代理不会失效，因为 proxy 记录日志后会继续转发事件。
@@ -385,6 +385,15 @@ SJLogger
 ```
 
 ## 更新日志
+
+### 0.5.0
+
+- 重构日志列表顶部布局，减少常驻区域占用并支持滚动收起。
+- 新增当前域名展示、域名切换和日志数量统计。
+- 新增失败、慢请求快捷筛选，并统一请求与接口视图的筛选状态。
+- 优化接口聚合规则，按域名与路径分组并在下钻时保留域名。
+- 优化日志行、搜索、统计和更多操作的交互与视觉层级。
+- 提高抓包、持久化、导出和界面打开流程的稳定性，并补充回归测试。
 
 ### 0.4.0
 

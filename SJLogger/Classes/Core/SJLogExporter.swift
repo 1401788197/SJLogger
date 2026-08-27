@@ -16,20 +16,18 @@ public enum SJLogExporter {
         }
         
         // URL
-        parts.append("'\(log.url)'")
+        parts.append(shellQuoted(log.url))
         
         // 请求头
         if let headers = log.requestHeaders {
             for (key, value) in headers.sorted(by: { $0.key < $1.key }) {
-                let escaped = value.replacingOccurrences(of: "'", with: "'\\''")
-                parts.append("-H '\(key): \(escaped)'")
+                parts.append("-H \(shellQuoted("\(key): \(value)"))")
             }
         }
         
         // 请求体
         if let body = log.requestBodyString, !body.isEmpty {
-            let escaped = body.replacingOccurrences(of: "'", with: "'\\''")
-            parts.append("--data '\(escaped)'")
+            parts.append("--data \(shellQuoted(body))")
         }
         
         return parts.joined(separator: " \\\n  ")
@@ -43,11 +41,11 @@ public enum SJLogExporter {
         let har: [String: Any] = [
             "log": [
                 "version": "1.2",
-                "creator": ["name": "SJLogger", "version": "0.4.0"],
+                "creator": ["name": "SJLogger", "version": "0.5.0"],
                 "entries": entries
             ]
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: har, options: [.prettyPrinted]),
+        guard let data = try? JSONSerialization.data(withJSONObject: har, options: [.prettyPrinted, .sortedKeys]),
               let str = String(data: data, encoding: .utf8) else {
             return "{}"
         }
@@ -57,21 +55,25 @@ public enum SJLogExporter {
     private static func harEntry(for log: SJLoggerModel) -> [String: Any] {
         let iso = ISO8601DateFormatter()
         
-        let reqHeaders = (log.requestHeaders ?? [:]).map { ["name": $0.key, "value": $0.value] }
-        let respHeaders = (log.responseHeaders ?? [:]).map { ["name": $0.key, "value": $0.value] }
+        let reqHeaders = sortedHeaders(log.requestHeaders)
+        let respHeaders = sortedHeaders(log.responseHeaders)
+        let queryItems = URLComponents(string: log.url)?.queryItems?.map {
+            ["name": $0.name, "value": $0.value ?? ""]
+        } ?? []
         
         var request: [String: Any] = [
             "method": log.method?.rawValue ?? "GET",
             "url": log.url,
             "httpVersion": "HTTP/1.1",
             "headers": reqHeaders,
-            "queryString": [],
+            "queryString": queryItems,
+            "cookies": [],
             "headersSize": -1,
             "bodySize": log.requestBody?.count ?? 0
         ]
         if let body = log.requestBodyString {
             request["postData"] = [
-                "mimeType": log.requestHeaders?["Content-Type"] ?? "application/json",
+                "mimeType": headerValue(named: "Content-Type", in: log.requestHeaders) ?? "application/octet-stream",
                 "text": body
             ]
         }
@@ -81,9 +83,10 @@ public enum SJLogExporter {
             "statusText": "",
             "httpVersion": "HTTP/1.1",
             "headers": respHeaders,
+            "cookies": [],
             "content": [
                 "size": log.responseSize,
-                "mimeType": log.responseHeaders?["Content-Type"] ?? "application/json",
+                "mimeType": headerValue(named: "Content-Type", in: log.responseHeaders) ?? "application/octet-stream",
                 "text": log.responseBodyString ?? ""
             ],
             "redirectURL": "",
@@ -103,5 +106,19 @@ public enum SJLogExporter {
                 "receive": 0
             ]
         ]
+    }
+
+    private static func shellQuoted(_ value: String) -> String {
+        return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private static func sortedHeaders(_ headers: [String: String]?) -> [[String: String]] {
+        return (headers ?? [:])
+            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+            .map { ["name": $0.key, "value": $0.value] }
+    }
+
+    private static func headerValue(named name: String, in headers: [String: String]?) -> String? {
+        return headers?.first { $0.key.caseInsensitiveCompare(name) == .orderedSame }?.value
     }
 }

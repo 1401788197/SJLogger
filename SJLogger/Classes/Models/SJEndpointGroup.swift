@@ -41,12 +41,16 @@ extension SJEndpointGroup {
     
     /// 从一组日志按path聚合生成分组列表（按最近调用时间倒序）
     static func build(from logs: [SJLoggerModel]) -> [SJEndpointGroup] {
-        // 保持稳定顺序：先收集每个path的日志
-        var order: [String] = []
-        var buckets: [String: [SJLoggerModel]] = [:]
+        // 同一路径可能存在于测试、预发和正式环境，必须按 host + path 分组。
+        struct GroupKey: Hashable {
+            let host: String
+            let path: String
+        }
+        var order: [GroupKey] = []
+        var buckets: [GroupKey: [SJLoggerModel]] = [:]
         
         for log in logs {
-            let key = log.path
+            let key = GroupKey(host: log.host, path: log.path)
             if buckets[key] == nil {
                 buckets[key] = []
                 order.append(key)
@@ -65,8 +69,8 @@ extension SJEndpointGroup {
             let lastTime = items.map { $0.startTime }.max() ?? latest.startTime
             
             let group = SJEndpointGroup(
-                path: key,
-                host: latest.host,
+                path: key.path,
+                host: key.host,
                 count: items.count,
                 successCount: success,
                 failedCount: failed,

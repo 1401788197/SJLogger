@@ -167,7 +167,8 @@ public class SJLogFilterViewController: UIViewController {
         query = SJLogQuery()
         query.path = path
         dismiss(animated: true) { [weak self] in
-            self?.onApply?(self!.query)
+            guard let self = self else { return }
+            self.onApply?(self.query)
         }
     }
     
@@ -196,10 +197,12 @@ public class SJLogFilterViewController: UIViewController {
     
     private func makeChip(title: String, selected: Bool) -> UIButton {
         let btn = UIButton(type: .system)
-        btn.setTitle(title, for: .normal)
+        var configuration = UIButton.Configuration.plain()
+        configuration.title = title
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14)
+        btn.configuration = configuration
         btn.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
         btn.layer.cornerRadius = 15
-        btn.contentEdgeInsets = UIEdgeInsets(top: 6, left: 14, bottom: 6, right: 14)
         styleChip(btn, selected: selected)
         return btn
     }
@@ -207,10 +210,10 @@ public class SJLogFilterViewController: UIViewController {
     private func styleChip(_ btn: UIButton, selected: Bool) {
         if selected {
             btn.backgroundColor = SJLoggerConfig.shared.floatingWindowColor
-            btn.setTitleColor(.white, for: .normal)
+            btn.configuration?.baseForegroundColor = .white
         } else {
             btn.backgroundColor = .secondarySystemGroupedBackground
-            btn.setTitleColor(.label, for: .normal)
+            btn.configuration?.baseForegroundColor = .label
         }
     }
     

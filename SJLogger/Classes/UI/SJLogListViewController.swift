@@ -15,10 +15,10 @@ public class SJLogListViewController: UIViewController {
         table.delegate = self
         table.dataSource = self
         table.register(SJLogCell.self, forCellReuseIdentifier: "SJLogCell")
-        table.rowHeight = 90
+        table.rowHeight = 80
         table.separatorStyle = .none
-        table.backgroundColor = .systemGroupedBackground
-        table.contentInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
+        table.backgroundColor = .systemBackground
+        table.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 8, right: 0)
         return table
     }()
     
@@ -28,8 +28,11 @@ public class SJLogListViewController: UIViewController {
         search.placeholder = "搜索URL、方法、内容..."
         search.searchBarStyle = .minimal
         search.backgroundImage = UIImage()
+        search.setShowsCancelButton(true, animated: false)
         return search
     }()
+
+    private let secondaryToolbar = UIView()
     
     private lazy var statsBar: SJStatsBar = {
         return SJStatsBar()
@@ -39,11 +42,14 @@ public class SJLogListViewController: UIViewController {
         let seg = UISegmentedControl(items: ["请求", "接口"])
         seg.selectedSegmentIndex = 0
         seg.addTarget(self, action: #selector(segmentChanged), for: .valueChanged)
+        let preferredWidth = seg.widthAnchor.constraint(equalToConstant: 168)
+        preferredWidth.priority = .defaultHigh
+        preferredWidth.isActive = true
         return seg
     }()
     
-    private lazy var chipsBar: SJChipsBar = {
-        let bar = SJChipsBar(titles: ["全部", "成功", "失败", "HTTP", "WebSocket"])
+    private lazy var compactFilterBar: SJCompactFilterBar = {
+        let bar = SJCompactFilterBar(titles: ["全部", "失败", "慢请求"])
         bar.onSelect = { [weak self] index in
             self?.quickFilter = SJQuickFilter(rawValue: index) ?? .all
             self?.applyQuery(reload: true)
@@ -67,39 +73,28 @@ public class SJLogListViewController: UIViewController {
     }()
     
     private lazy var filterButton: UIButton = {
-        return SJCustomNavigationBar.iconButton(systemName: "line.3.horizontal.decrease.circle",
+        let button = SJCustomNavigationBar.iconButton(systemName: "line.3.horizontal.decrease",
                                                 target: self,
                                                 action: #selector(showFilterOptions))
+        button.accessibilityLabel = "筛选"
+        return button
     }()
     
-    private lazy var liveButton: UIButton = {
-        return SJCustomNavigationBar.iconButton(systemName: "pause.circle",
-                                                target: self,
-                                                action: #selector(toggleRefreshMode))
+    private lazy var searchButton: UIButton = {
+        let button = SJCustomNavigationBar.iconButton(systemName: "magnifyingglass",
+                                                      target: self,
+                                                      action: #selector(toggleSearch))
+        button.accessibilityLabel = "搜索"
+        return button
     }()
     
-    private lazy var clearButton: UIButton = {
-        return SJCustomNavigationBar.iconButton(systemName: "trash",
-                                                target: self,
-                                                action: #selector(clearCurrentLogs))
-    }()
-    
-    private lazy var exportButton: UIButton = {
-        return SJCustomNavigationBar.iconButton(systemName: "square.and.arrow.up",
-                                                target: self,
-                                                action: #selector(exportLogs))
-    }()
-    
-    private lazy var settingsButton: UIButton = {
-        return SJCustomNavigationBar.iconButton(systemName: "gearshape",
-                                                target: self,
-                                                action: #selector(showSettings))
-    }()
-    
-    private lazy var selectButton: UIButton = {
-        return SJCustomNavigationBar.textButton(title: "选择",
-                                                target: self,
-                                                action: #selector(toggleSelectionMode))
+    private lazy var moreButton: UIButton = {
+        let button = SJCustomNavigationBar.iconButton(systemName: "ellipsis",
+                                                      target: self,
+                                                      action: #selector(showMoreMenu))
+        button.accessibilityLabel = "更多操作"
+        button.showsMenuAsPrimaryAction = true
+        return button
     }()
     
     private lazy var emptyLabel: UILabel = {
@@ -116,8 +111,9 @@ public class SJLogListViewController: UIViewController {
     /// 接口分组子控制器（仅在「接口」分段显示）
     private lazy var endpointsVC: SJEndpointListViewController = {
         let vc = SJEndpointListViewController()
-        vc.onSelectPath = { [weak self] path in
+        vc.onSelectEndpoint = { [weak self] path, host in
             let detail = SJLogListViewController(fixedPath: path)
+            detail.selectedHost = host.isEmpty ? self?.selectedHost : host
             self?.navigationController?.pushViewController(detail, animated: true)
         }
         return vc
@@ -137,6 +133,8 @@ public class SJLogListViewController: UIViewController {
     private var query = SJLogQuery()
     /// 快捷分类
     private var quickFilter: SJQuickFilter = .all
+    /// nil 表示全部域名。
+    private var selectedHost: String?
     
     /// 刷新模式（动态/固定）
     private var refreshMode: SJRefreshMode = SJLoggerConfig.shared.defaultRefreshMode
@@ -149,6 +147,9 @@ public class SJLogListViewController: UIViewController {
     // 多选模式
     private var isSelectionMode = false
     private var selectedLogs: Set<String> = [] // 存储选中的log ID
+    private var isSearchVisible = false
+    private var isSecondaryToolbarCollapsed = false
+    private var secondaryToolbarHeightConstraint: NSLayoutConstraint?
     
     private var listTitle: String {
         return titleOverride ?? fixedPath ?? "Logger"
@@ -212,8 +213,8 @@ public class SJLogListViewController: UIViewController {
     
     public override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // 布局变化时更新内边距
         updateContentInsets()
+        updateStatsHeaderFrame()
     }
     
     deinit {
@@ -225,96 +226,86 @@ public class SJLogListViewController: UIViewController {
     private func setupUI() {
         title = listTitle
         view.backgroundColor = .systemBackground
-        
+
         configureCustomNavigationBar()
-        
-        let hidesSegments = fixedPath != nil || isSnapshotMode
-        let hidesStats = fixedPath != nil
-        segmentedControl.isHidden = hidesSegments
-        statsBar.isHidden = hidesStats
-        
-        // 添加子视图
+
+        secondaryToolbar.backgroundColor = .systemBackground
+        secondaryToolbar.clipsToBounds = true
+        searchBar.isHidden = true
+        secondaryToolbar.addSubview(compactFilterBar)
+        secondaryToolbar.addSubview(searchBar)
+
         view.addSubview(customNavigationBar)
-        view.addSubview(statsBar)
-        view.addSubview(segmentedControl)
-        view.addSubview(chipsBar)
-        view.addSubview(searchBar)
+        view.addSubview(secondaryToolbar)
         view.addSubview(tableView)
         view.addSubview(emptyLabel)
         view.addSubview(newLogsBanner)
-        
-        [customNavigationBar, statsBar, segmentedControl, chipsBar, searchBar, tableView, emptyLabel, newLogsBanner].forEach {
+
+        [customNavigationBar, secondaryToolbar, compactFilterBar, searchBar, tableView, emptyLabel, newLogsBanner].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
         }
-        
-        let topGuide = customNavigationBar.bottomAnchor
-        let statsHeight: CGFloat = hidesStats ? 0 : 44
-        let segmentTopAnchor = hidesStats ? topGuide : statsBar.bottomAnchor
-        let contentTopAnchor = hidesSegments ? segmentTopAnchor : segmentedControl.bottomAnchor
-        
+
+        let toolbarHeight = secondaryToolbar.heightAnchor.constraint(equalToConstant: 40)
+        secondaryToolbarHeightConstraint = toolbarHeight
+
         NSLayoutConstraint.activate([
             customNavigationBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             customNavigationBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             customNavigationBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            
-            statsBar.topAnchor.constraint(equalTo: topGuide),
-            statsBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            statsBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            statsBar.heightAnchor.constraint(equalToConstant: statsHeight),
-            
-            segmentedControl.topAnchor.constraint(equalTo: segmentTopAnchor, constant: hidesSegments ? 0 : 8),
-            segmentedControl.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            segmentedControl.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            segmentedControl.heightAnchor.constraint(equalToConstant: hidesSegments ? 0 : 30),
-            
-            chipsBar.topAnchor.constraint(equalTo: contentTopAnchor, constant: 8),
-            chipsBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            chipsBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            chipsBar.heightAnchor.constraint(equalToConstant: 34),
-            
-            searchBar.topAnchor.constraint(equalTo: chipsBar.bottomAnchor, constant: 4),
-            searchBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            searchBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
-            
-            tableView.topAnchor.constraint(equalTo: searchBar.bottomAnchor),
+
+            secondaryToolbar.topAnchor.constraint(equalTo: customNavigationBar.bottomAnchor),
+            secondaryToolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            secondaryToolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            toolbarHeight,
+
+            compactFilterBar.topAnchor.constraint(equalTo: secondaryToolbar.topAnchor),
+            compactFilterBar.leadingAnchor.constraint(equalTo: secondaryToolbar.leadingAnchor),
+            compactFilterBar.trailingAnchor.constraint(equalTo: secondaryToolbar.trailingAnchor),
+            compactFilterBar.bottomAnchor.constraint(equalTo: secondaryToolbar.bottomAnchor),
+
+            searchBar.topAnchor.constraint(equalTo: secondaryToolbar.topAnchor),
+            searchBar.leadingAnchor.constraint(equalTo: secondaryToolbar.safeAreaLayoutGuide.leadingAnchor),
+            searchBar.trailingAnchor.constraint(equalTo: secondaryToolbar.safeAreaLayoutGuide.trailingAnchor),
+            searchBar.bottomAnchor.constraint(equalTo: secondaryToolbar.bottomAnchor),
+
+            tableView.topAnchor.constraint(equalTo: secondaryToolbar.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            
+
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 40),
             emptyLabel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -40),
-            
+
             newLogsBanner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            newLogsBanner.topAnchor.constraint(equalTo: searchBar.bottomAnchor, constant: 8),
+            newLogsBanner.topAnchor.constraint(equalTo: tableView.topAnchor, constant: 8),
             newLogsBanner.heightAnchor.constraint(equalToConstant: 28)
         ])
-        
-        updateLiveButton()
+
+        if fixedPath == nil {
+            statsBar.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: statsBar.preferredHeight)
+            tableView.tableHeaderView = statsBar
+            statsBar.onPreferredHeightChange = { [weak self] height in
+                self?.setStatsHeaderHeight(height)
+            }
+        }
+
+        updateActionMenu()
+        updateDomainMenu()
     }
     
     private func configureCustomNavigationBar() {
-        customNavigationBar.setTitle(shouldHideRootTitle ? "" : listTitle)
+        let showsSegments = fixedPath == nil && !isSnapshotMode
+        customNavigationBar.setCenterView(showsSegments ? segmentedControl : nil)
+        customNavigationBar.setTitle(showsSegments ? "" : listTitle)
         let isPushed = navigationController?.viewControllers.first !== self
         let closeButton = SJCustomNavigationBar.iconButton(systemName: isPushed ? "chevron.left" : "xmark",
                                                            target: self,
                                                            action: isPushed ? #selector(backAction) : #selector(closeAction))
-        
-        var leftItems: [UIButton] = [closeButton]
-        var rightItems: [UIButton] = isSnapshotMode ? [filterButton, exportButton] : [liveButton, filterButton, exportButton]
-        
-        if fixedPath == nil && !isSnapshotMode {
-            leftItems.append(selectButton)
-            rightItems.append(contentsOf: [clearButton, settingsButton])
-        }
-        
-        customNavigationBar.setLeftButtons(leftItems)
-        customNavigationBar.setRightButtons(rightItems)
-    }
-    
-    private var shouldHideRootTitle: Bool {
-        return fixedPath == nil && !isSnapshotMode
+        closeButton.accessibilityLabel = isPushed ? "返回" : "关闭"
+        customNavigationBar.setLeftButtons([closeButton])
+        customNavigationBar.setRightButtons([searchButton, filterButton, moreButton])
     }
     
     // MARK: - 数据加载
@@ -322,16 +313,16 @@ public class SJLogListViewController: UIViewController {
     private func loadLogs() {
         if let snapshotLogs = snapshotLogs {
             allLogs = snapshotLogs
+            updateDomainMenu()
             applyQuery(reload: true)
-            updateStats()
             return
         }
         
         SJLoggerStorage.shared.getAllLogs { [weak self] logs in
             guard let self = self else { return }
             self.allLogs = logs
+            self.updateDomainMenu()
             self.applyQuery(reload: true)
-            self.updateStats()
         }
     }
     
@@ -347,12 +338,13 @@ public class SJLogListViewController: UIViewController {
         if refreshMode == .frozen && !isSelectionMode {
             SJLoggerStorage.shared.getAllLogs { [weak self] logs in
                 guard let self = self else { return }
-                let newCount = max(0, logs.count - self.allLogs.count)
+                let previousCount = self.scopedLogs(from: self.allLogs).count
+                let newCount = max(0, self.scopedLogs(from: logs).count - previousCount)
+                self.allLogs = logs
+                self.updateDomainMenu()
                 if newCount > 0 {
                     self.pendingCount += newCount
-                    self.allLogs = logs  // 后台更新数据源，但不刷新可见列表
                     self.updateNewLogsBanner()
-                    self.updateStats()
                 }
             }
             return
@@ -363,20 +355,29 @@ public class SJLogListViewController: UIViewController {
     
     /// 合并当前query+快捷分类，刷新展示
     private func applyQuery(reload: Bool) {
-        var q = query
-        // 合并快捷分类
-        switch quickFilter {
-        case .all: break
-        case .success: q.statusBuckets.insert(.success)
-        case .failed: q.onlyFailed = true
-        case .http: q.types.formUnion([.http, .https])
-        case .websocket: q.types.insert(.websocket)
-        }
-        filteredLogs = q.apply(to: allLogs)
+        filteredLogs = scopedLogs(from: allLogs)
         pendingCount = 0
         updateNewLogsBanner()
-        if reload { updateUI() }
+        updateStats()
+        updateQuickFilterCounts()
         updateFilterBadge()
+        updateEndpointFiltersIfNeeded()
+        if reload { updateUI() }
+    }
+
+    private var effectiveQuery: SJLogQuery {
+        var q = query
+        switch quickFilter {
+        case .all: break
+        case .failed: q.onlyFailed = true
+        case .slow: q.minDurationMs = SJLoggerConfig.shared.slowRequestThresholdMs
+        }
+        return q
+    }
+
+    private func scopedLogs(from logs: [SJLoggerModel]) -> [SJLoggerModel] {
+        let domainLogs = logs.filter { selectedHost == nil || $0.host == selectedHost }
+        return effectiveQuery.apply(to: domainLogs)
     }
     
     // MARK: - 状态恢复
@@ -385,14 +386,15 @@ public class SJLogListViewController: UIViewController {
         if fixedPath == nil, !isSnapshotMode, !Self.savedSearchText.isEmpty {
             searchBar.text = Self.savedSearchText
             query.keyword = Self.savedSearchText
+            setSearchVisible(true, animated: false, focus: false)
         }
     }
     
-    // MARK: - 统计 / 提示条 / Live按钮
+    // MARK: - 统计 / 提示条 / 操作状态
     
     private func updateStats() {
         guard fixedPath == nil else { return }
-        statsBar.update(with: allLogs)
+        statsBar.update(with: filteredLogs)
     }
     
     private func updateNewLogsBanner() {
@@ -404,19 +406,193 @@ public class SJLogListViewController: UIViewController {
         }
     }
     
-    private func updateLiveButton() {
-        if refreshMode == .live {
-            SJCustomNavigationBar.setIcon("pause.circle", for: liveButton, color: .systemGreen)
-        } else {
-            SJCustomNavigationBar.setIcon("play.circle.fill", for: liveButton, color: .systemOrange)
-        }
-    }
-    
     private func updateFilterBadge() {
         let imageName = query.hasAdvancedFilter
             ? "line.3.horizontal.decrease.circle.fill"
-            : "line.3.horizontal.decrease.circle"
+            : "line.3.horizontal.decrease"
         SJCustomNavigationBar.setIcon(imageName, for: filterButton)
+    }
+
+    private func updateQuickFilterCounts() {
+        let domainLogs = allLogs.filter { selectedHost == nil || $0.host == selectedHost }
+        let failed = domainLogs.filter {
+            $0.error != nil || (($0.statusCode ?? 0) >= 400)
+        }.count
+        let slow = domainLogs.filter {
+            ($0.duration ?? 0) >= SJLoggerConfig.shared.slowRequestThresholdMs
+        }.count
+        compactFilterBar.setFilterTitles([
+            "全部 \(domainLogs.count)",
+            "失败 \(failed)",
+            "慢请求 \(slow)"
+        ])
+        compactFilterBar.setSelectedIndex(quickFilter.rawValue)
+    }
+
+    private func updateDomainMenu() {
+        var counts: [String: Int] = [:]
+        allLogs.map(\.host).filter { !$0.isEmpty }.forEach { counts[$0, default: 0] += 1 }
+        let hosts = counts.keys.sorted {
+            let lhsCount = counts[$0, default: 0]
+            let rhsCount = counts[$1, default: 0]
+            return lhsCount == rhsCount ? $0.localizedCaseInsensitiveCompare($1) == .orderedAscending : lhsCount > rhsCount
+        }
+
+        if !allLogs.isEmpty, let selectedHost = selectedHost, !hosts.contains(selectedHost) {
+            self.selectedHost = nil
+        }
+
+        var actions: [UIMenuElement] = [
+            UIAction(title: "全部域名", image: UIImage(systemName: "globe"),
+                     state: selectedHost == nil ? .on : .off) { [weak self] _ in
+                self?.selectDomain(nil)
+            }
+        ]
+        actions.append(contentsOf: hosts.map { host in
+            UIAction(title: "\(host)  \(counts[host, default: 0])",
+                     state: selectedHost == host ? .on : .off) { [weak self] _ in
+                self?.selectDomain(host)
+            }
+        })
+
+        let title = selectedHost ?? "全部域名"
+        compactFilterBar.setDomain(title: title,
+                                   menu: UIMenu(title: "选择域名", options: .displayInline, children: actions))
+        updateQuickFilterCounts()
+    }
+
+    private func selectDomain(_ host: String?) {
+        selectedHost = host
+        updateDomainMenu()
+        applyQuery(reload: true)
+        if !filteredLogs.isEmpty {
+            tableView.setContentOffset(CGPoint(x: 0, y: -tableView.adjustedContentInset.top), animated: false)
+        }
+    }
+
+    private func updateEndpointFiltersIfNeeded() {
+        guard segmentedControl.selectedSegmentIndex == 1, endpointsVC.parent === self else { return }
+        endpointsVC.setHost(selectedHost)
+        var endpointQuery = effectiveQuery
+        endpointQuery.keyword = ""
+        endpointQuery.path = nil
+        endpointsVC.setFilterQuery(endpointQuery)
+    }
+
+    private func setStatsHeaderHeight(_ height: CGFloat) {
+        guard tableView.tableHeaderView === statsBar else { return }
+        var frame = statsBar.frame
+        frame.size.height = height
+        statsBar.frame = frame
+        tableView.tableHeaderView = statsBar
+    }
+
+    private func updateStatsHeaderFrame() {
+        guard tableView.tableHeaderView === statsBar else { return }
+        let width = tableView.bounds.width
+        guard width > 0, statsBar.frame.width != width else { return }
+        statsBar.frame = CGRect(x: 0, y: 0, width: width, height: statsBar.preferredHeight)
+        tableView.tableHeaderView = statsBar
+    }
+
+    private func updateActionMenu() {
+        var primaryActions: [UIMenuElement] = []
+        if !isSnapshotMode {
+            let isLive = refreshMode == .live
+            primaryActions.append(UIAction(title: isLive ? "暂停实时刷新" : "恢复实时刷新",
+                                           image: UIImage(systemName: isLive ? "pause.circle" : "play.circle.fill")) { [weak self] _ in
+                self?.toggleRefreshMode()
+            })
+        }
+        if fixedPath == nil && !isSnapshotMode {
+            primaryActions.append(UIAction(title: isSelectionMode ? "取消选择" : "选择日志",
+                                           image: UIImage(systemName: isSelectionMode ? "xmark.circle" : "checkmark.circle")) { [weak self] _ in
+                self?.toggleSelectionMode()
+            })
+        }
+        primaryActions.append(UIAction(title: isSelectionMode ? "导出已选日志" : "导出当前结果",
+                                       image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in
+            self?.exportLogs()
+        })
+
+        var secondaryActions: [UIMenuElement] = []
+        if fixedPath == nil && !isSnapshotMode {
+            secondaryActions.append(UIAction(title: "设置", image: UIImage(systemName: "gearshape")) { [weak self] _ in
+                self?.showSettings()
+            })
+            secondaryActions.append(UIAction(title: "清除当前日志", image: UIImage(systemName: "trash"),
+                                             attributes: .destructive) { [weak self] _ in
+                self?.clearCurrentLogs()
+            })
+        }
+
+        var groups: [UIMenuElement] = [UIMenu(options: .displayInline, children: primaryActions)]
+        if !secondaryActions.isEmpty {
+            groups.append(UIMenu(options: .displayInline, children: secondaryActions))
+        }
+        moreButton.menu = UIMenu(children: groups)
+
+        let color: UIColor = (!isSnapshotMode && refreshMode == .frozen) ? .systemOrange : SJLoggerConfig.shared.floatingWindowColor
+        SJCustomNavigationBar.setIcon("ellipsis", for: moreButton, color: color)
+        moreButton.accessibilityValue = (!isSnapshotMode && refreshMode == .frozen) ? "已暂停" : nil
+    }
+
+    @objc private func showMoreMenu() {}
+
+    @objc private func toggleSearch() {
+        if isSearchVisible {
+            clearSearchAndHide()
+        } else {
+            setSearchVisible(true, animated: true, focus: true)
+        }
+    }
+
+    private func clearSearchAndHide() {
+        searchBar.text = ""
+        searchBar.resignFirstResponder()
+        Self.savedSearchText = ""
+        query.keyword = ""
+        setSearchVisible(false, animated: true, focus: false)
+        applyQuery(reload: true)
+    }
+
+    private func setSearchVisible(_ visible: Bool, animated: Bool, focus: Bool) {
+        guard isSearchVisible != visible else {
+            if visible && focus { searchBar.becomeFirstResponder() }
+            return
+        }
+        if visible { setSecondaryToolbarCollapsed(false, animated: false) }
+        isSearchVisible = visible
+
+        let changes = {
+            self.compactFilterBar.isHidden = visible
+            self.searchBar.isHidden = !visible
+            SJCustomNavigationBar.setIcon(visible ? "xmark.circle.fill" : "magnifyingglass", for: self.searchButton)
+            self.view.layoutIfNeeded()
+        }
+        if animated {
+            UIView.transition(with: secondaryToolbar, duration: 0.2, options: .transitionCrossDissolve, animations: changes)
+        } else {
+            changes()
+        }
+        if visible && focus {
+            DispatchQueue.main.async { [weak self] in self?.searchBar.becomeFirstResponder() }
+        }
+    }
+
+    private func setSecondaryToolbarCollapsed(_ collapsed: Bool, animated: Bool) {
+        guard !isSearchVisible || !collapsed, isSecondaryToolbarCollapsed != collapsed else { return }
+        isSecondaryToolbarCollapsed = collapsed
+        secondaryToolbarHeightConstraint?.constant = collapsed ? 0 : 40
+        let changes = {
+            self.compactFilterBar.alpha = collapsed ? 0 : 1
+            self.view.layoutIfNeeded()
+        }
+        if animated {
+            UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: changes)
+        } else {
+            changes()
+        }
     }
     
     @objc private func applyPendingLogs() {
@@ -430,7 +606,7 @@ public class SJLogListViewController: UIViewController {
     
     @objc private func toggleRefreshMode() {
         refreshMode = (refreshMode == .live) ? .frozen : .live
-        updateLiveButton()
+        updateActionMenu()
         if refreshMode == .live {
             applyPendingLogs()
         }
@@ -440,19 +616,24 @@ public class SJLogListViewController: UIViewController {
     
     @objc private func segmentChanged() {
         let showEndpoints = segmentedControl.selectedSegmentIndex == 1
-        chipsBar.isHidden = showEndpoints
         if showEndpoints {
             addChild(endpointsVC)
             endpointsVC.view.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(endpointsVC.view)
             NSLayoutConstraint.activate([
-                endpointsVC.view.topAnchor.constraint(equalTo: searchBar.bottomAnchor),
+                endpointsVC.view.topAnchor.constraint(equalTo: secondaryToolbar.bottomAnchor),
                 endpointsVC.view.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
                 endpointsVC.view.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
                 endpointsVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
             ])
             endpointsVC.didMove(toParent: self)
             endpointsVC.setKeyword(searchBar.text ?? "")
+            endpointsVC.setHost(selectedHost)
+            var endpointQuery = effectiveQuery
+            endpointQuery.keyword = ""
+            endpointQuery.path = nil
+            endpointsVC.setFilterQuery(endpointQuery)
+            view.bringSubviewToFront(newLogsBanner)
         } else {
             endpointsVC.willMove(toParent: nil)
             endpointsVC.view.removeFromSuperview()
@@ -497,7 +678,7 @@ public class SJLogListViewController: UIViewController {
     
     private func updateContentInsets() {
         let inset = contentInset
-        tableView.contentInset = UIEdgeInsets(top: 8,
+        tableView.contentInset = UIEdgeInsets(top: 0,
                                               left: inset.left,
                                               bottom: 8,
                                               right: inset.right)
@@ -552,12 +733,10 @@ public class SJLogListViewController: UIViewController {
         selectedLogs.removeAll()
         
         if isSelectionMode {
-            selectButton.setTitle("取消", for: .normal)
             tableView.allowsMultipleSelection = true
             // 进入编辑模式，停止监听日志更新
             NotificationCenter.default.removeObserver(self, name: SJLoggerStorage.logsDidUpdateNotification, object: nil)
         } else {
-            selectButton.setTitle("选择", for: .normal)
             tableView.allowsMultipleSelection = false
             // 退出编辑模式，恢复监听日志更新
             observeLogUpdates()
@@ -565,6 +744,7 @@ public class SJLogListViewController: UIViewController {
             loadLogs()
         }
         
+        updateActionMenu()
         tableView.reloadData()
     }
     
@@ -613,8 +793,8 @@ public class SJLogListViewController: UIViewController {
         let activityVC = UIActivityViewController(activityItems: [text], applicationActivities: nil)
         
         if let popover = activityVC.popoverPresentationController {
-            popover.sourceView = exportButton
-            popover.sourceRect = exportButton.bounds
+            popover.sourceView = moreButton
+            popover.sourceRect = moreButton.bounds
         }
         
         present(activityVC, animated: true)
@@ -640,7 +820,10 @@ extension SJLogListViewController: UITableViewDataSource {
         
         // 配置Cell，传入选中状态和是否显示勾选图标
         let isSelected = selectedLogs.contains(log.id)
-        cell.configure(with: log, isSelected: isSelected, showCheckmark: isSelectionMode)
+        cell.configure(with: log,
+                       isSelected: isSelected,
+                       showCheckmark: isSelectionMode,
+                       showsHost: selectedHost == nil)
         
         return cell
     }
@@ -690,6 +873,10 @@ extension SJLogListViewController: UITableViewDelegate {
     private func shareLog(_ log: SJLoggerModel) {
         let text = log.generateLogText()
         let activityVC = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+        if let popover = activityVC.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
+        }
         present(activityVC, animated: true)
     }
 }
@@ -712,30 +899,43 @@ extension SJLogListViewController: UISearchBarDelegate {
     }
     
     public func searchBarCancelButtonClicked(_ searchBar: UISearchBar) {
-        searchBar.text = ""
-        searchBar.resignFirstResponder()
-        query.keyword = ""
-        applyQuery(reload: true)
+        clearSearchAndHide()
     }
 }
 
-// MARK: - 滚动自动固定
+// MARK: - 滚动行为
 extension SJLogListViewController {
     public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         // 用户开始浏览历史时，自动切到固定模式，避免被新日志打断
-        guard SJLoggerConfig.shared.autoFreezeOnInteraction,
-              refreshMode == .live,
-              scrollView.contentOffset.y > 20 else { return }
-        refreshMode = .frozen
-        updateLiveButton()
+        if SJLoggerConfig.shared.autoFreezeOnInteraction,
+           refreshMode == .live,
+           scrollView.contentOffset.y > 20 {
+            refreshMode = .frozen
+            updateActionMenu()
+        }
+    }
+
+    public func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        if scrollView.contentOffset.y <= -scrollView.adjustedContentInset.top {
+            setSecondaryToolbarCollapsed(false, animated: true)
+        }
+    }
+
+    public func scrollViewWillEndDragging(_ scrollView: UIScrollView,
+                                          withVelocity velocity: CGPoint,
+                                          targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+        guard !isSearchVisible, scrollView === tableView else { return }
+        if targetContentOffset.pointee.y <= 0 || velocity.y < -0.35 {
+            setSecondaryToolbarCollapsed(false, animated: true)
+        } else if velocity.y > 0.35 {
+            setSecondaryToolbarCollapsed(true, animated: true)
+        }
     }
 }
 
 // MARK: - 快捷分类
 enum SJQuickFilter: Int {
     case all = 0
-    case success = 1
-    case failed = 2
-    case http = 3
-    case websocket = 4
+    case failed = 1
+    case slow = 2
 }

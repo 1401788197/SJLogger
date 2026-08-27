@@ -1,200 +1,153 @@
 import UIKit
 
-// MARK: - 日志列表Cell
-/// 日志列表的单元格，显示日志摘要信息
+// MARK: - 日志列表 Cell
+/// 紧凑的两行摘要，优先展示路径、状态和耗时。
 class SJLogCell: UITableViewCell {
-    
-    // MARK: - UI组件
-    
-    private let typeLabel: UILabel = {
-        let label = UILabel()
-        label.font = .systemFont(ofSize: 11, weight: .semibold)
-        label.textAlignment = .center
-        label.layer.cornerRadius = 6
-        label.layer.masksToBounds = true
-        return label
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
     }()
-    
-    private let methodLabel: UILabel = {
-        let label = UILabel()
-        label.font = .systemFont(ofSize: 12, weight: .semibold)
-        label.textColor = .label
-        return label
-    }()
-    
-    private let urlLabel: UILabel = {
-        let label = UILabel()
-        label.font = .systemFont(ofSize: 13)
-        label.textColor = .label
-        label.numberOfLines = 2
-        return label
-    }()
-    
-    private let statusLabel: UILabel = {
-        let label = UILabel()
-        label.font = .systemFont(ofSize: 12, weight: .medium)
-        label.textAlignment = .right
-        return label
-    }()
-    
-    private let timeLabel: UILabel = {
-        let label = UILabel()
-        label.font = .systemFont(ofSize: 11)
-        label.textColor = .secondaryLabel
-        label.textAlignment = .right
-        return label
-    }()
-    
-    private let durationLabel: UILabel = {
-        let label = UILabel()
-        label.font = .systemFont(ofSize: 11)
-        label.textColor = .secondaryLabel
-        label.textAlignment = .right
-        return label
-    }()
-    
-    private let checkmarkImageView: UIImageView = {
-        let imageView = UIImageView()
-        imageView.image = UIImage(systemName: "checkmark.circle.fill")
-        imageView.tintColor = .systemBlue
-        imageView.contentMode = .scaleAspectFit
-        imageView.isHidden = true
-        return imageView
-    }()
-    
-    // MARK: - 初始化
-    
+
+    private let methodBadge = SJBadgeLabel()
+    private let pathLabel = UILabel()
+    private let hostLabel = UILabel()
+    private let hostSeparator = UILabel()
+    private let statusLabel = UILabel()
+    private let statusSeparator = UILabel()
+    private let durationLabel = UILabel()
+    private let timeLabel = UILabel()
+    private let accessoryContainer = UIView()
+    private let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
+    private let checkmark = UIImageView()
+    private let separator = UIView()
+
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         setupUI()
     }
-    
+
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
-    
-    // MARK: - UI设置
-    
+
     private func setupUI() {
-        // 设置卡片样式
-        backgroundColor = .clear
-        contentView.backgroundColor = .secondarySystemGroupedBackground
-        contentView.layer.cornerRadius = 12
-        contentView.layer.masksToBounds = true
+        backgroundColor = .systemBackground
+        contentView.backgroundColor = .systemBackground
         selectionStyle = .none
-        // 添加阴影容器
-        layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOffset = CGSize(width: 0, height: 2)
-        layer.shadowRadius = 4
-        layer.shadowOpacity = 0.08
-        layer.masksToBounds = false
-        
-        contentView.addSubview(typeLabel)
-        contentView.addSubview(methodLabel)
-        contentView.addSubview(urlLabel)
-        contentView.addSubview(statusLabel)
-        contentView.addSubview(timeLabel)
-        contentView.addSubview(durationLabel)
-        contentView.addSubview(checkmarkImageView)
-        
-        typeLabel.translatesAutoresizingMaskIntoConstraints = false
-        methodLabel.translatesAutoresizingMaskIntoConstraints = false
-        urlLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        timeLabel.translatesAutoresizingMaskIntoConstraints = false
-        durationLabel.translatesAutoresizingMaskIntoConstraints = false
-        checkmarkImageView.translatesAutoresizingMaskIntoConstraints = false
-        
+
+        pathLabel.font = .systemFont(ofSize: 15, weight: .medium)
+        pathLabel.textColor = .label
+        pathLabel.numberOfLines = 1
+        pathLabel.lineBreakMode = .byTruncatingMiddle
+
+        hostLabel.font = .systemFont(ofSize: 11)
+        hostLabel.textColor = .secondaryLabel
+        hostLabel.numberOfLines = 1
+        hostLabel.lineBreakMode = .byTruncatingMiddle
+        hostLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        [hostSeparator, statusSeparator].forEach {
+            $0.text = "·"
+            $0.font = .systemFont(ofSize: 11)
+            $0.textColor = .tertiaryLabel
+        }
+
+        statusLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        durationLabel.font = .systemFont(ofSize: 12)
+        durationLabel.textColor = .secondaryLabel
+
+        timeLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        timeLabel.textColor = .secondaryLabel
+        timeLabel.textAlignment = .right
+        timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        chevron.tintColor = .tertiaryLabel
+        chevron.contentMode = .scaleAspectFit
+        checkmark.tintColor = SJLoggerConfig.shared.floatingWindowColor
+        checkmark.contentMode = .scaleAspectFit
+        separator.backgroundColor = .separator
+
+        let metadataStack = UIStackView(arrangedSubviews: [
+            hostLabel, hostSeparator, statusLabel, statusSeparator, durationLabel, UIView(), timeLabel
+        ])
+        metadataStack.axis = .horizontal
+        metadataStack.alignment = .center
+        metadataStack.spacing = 6
+
+        let labels = UIStackView(arrangedSubviews: [pathLabel, metadataStack])
+        labels.axis = .vertical
+        labels.alignment = .fill
+        labels.spacing = 7
+
+        contentView.addSubview(methodBadge)
+        contentView.addSubview(labels)
+        contentView.addSubview(accessoryContainer)
+        accessoryContainer.addSubview(chevron)
+        accessoryContainer.addSubview(checkmark)
+        contentView.addSubview(separator)
+
+        [methodBadge, labels, accessoryContainer, chevron, checkmark, separator].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+        }
+
         NSLayoutConstraint.activate([
-            typeLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            typeLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
-            typeLabel.widthAnchor.constraint(equalToConstant: 55),
-            typeLabel.heightAnchor.constraint(equalToConstant: 20),
-            
-            methodLabel.leadingAnchor.constraint(equalTo: typeLabel.trailingAnchor, constant: 8),
-            methodLabel.centerYAnchor.constraint(equalTo: typeLabel.centerYAnchor),
-            
-            statusLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
-            statusLabel.centerYAnchor.constraint(equalTo: typeLabel.centerYAnchor),
-            statusLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 40),
-            
-            urlLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            urlLabel.topAnchor.constraint(equalTo: typeLabel.bottomAnchor, constant: 8),
-            urlLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            
-            timeLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            timeLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
-            
-            durationLabel.trailingAnchor.constraint(equalTo: timeLabel.leadingAnchor, constant: -12),
-            durationLabel.centerYAnchor.constraint(equalTo: timeLabel.centerYAnchor),
-            
-            checkmarkImageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            checkmarkImageView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            checkmarkImageView.widthAnchor.constraint(equalToConstant: 24),
-            checkmarkImageView.heightAnchor.constraint(equalToConstant: 24)
+            methodBadge.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            methodBadge.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            methodBadge.heightAnchor.constraint(equalToConstant: 24),
+
+            labels.leadingAnchor.constraint(equalTo: methodBadge.trailingAnchor, constant: 12),
+            labels.trailingAnchor.constraint(equalTo: accessoryContainer.leadingAnchor, constant: -10),
+            labels.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+
+            accessoryContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            accessoryContainer.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            accessoryContainer.widthAnchor.constraint(equalToConstant: 24),
+            accessoryContainer.heightAnchor.constraint(equalToConstant: 28),
+
+            chevron.centerXAnchor.constraint(equalTo: accessoryContainer.centerXAnchor),
+            chevron.centerYAnchor.constraint(equalTo: accessoryContainer.centerYAnchor),
+            chevron.widthAnchor.constraint(equalToConstant: 9),
+            chevron.heightAnchor.constraint(equalToConstant: 14),
+
+            checkmark.centerXAnchor.constraint(equalTo: accessoryContainer.centerXAnchor),
+            checkmark.centerYAnchor.constraint(equalTo: accessoryContainer.centerYAnchor),
+            checkmark.widthAnchor.constraint(equalToConstant: 22),
+            checkmark.heightAnchor.constraint(equalToConstant: 22),
+
+            separator.leadingAnchor.constraint(equalTo: labels.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            separator.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            separator.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale)
         ])
     }
-    
-    // MARK: - 布局
-    
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        // 添加Cell之间的间距
-        contentView.frame = contentView.frame.inset(by: UIEdgeInsets(top: 4, left: 12, bottom: 4, right: 12))
-    }
-    
-    // MARK: - 配置
-    
-    func configure(with log: SJLoggerModel, isSelected: Bool = false, showCheckmark: Bool = false) {
-        // 显示/隐藏勾选图标
-        checkmarkImageView.isHidden = !showCheckmark
-        if showCheckmark {
-            checkmarkImageView.image = isSelected ? 
-                UIImage(systemName: "checkmark.circle.fill") : 
-                UIImage(systemName: "circle")
-        }
-        
-        // 类型标签
-        typeLabel.text = log.type.rawValue
-        switch log.type {
-        case .http, .https:
-            typeLabel.backgroundColor = .systemBlue.withAlphaComponent(0.2)
-            typeLabel.textColor = .systemBlue
-        case .tcp:
-            typeLabel.backgroundColor = .systemPurple.withAlphaComponent(0.2)
-            typeLabel.textColor = .systemPurple
-        case .udp:
-            typeLabel.backgroundColor = .systemOrange.withAlphaComponent(0.2)
-            typeLabel.textColor = .systemOrange
-        case .websocket:
-            typeLabel.backgroundColor = .systemGreen.withAlphaComponent(0.2)
-            typeLabel.textColor = .systemGreen
-        }
-        
-        // 方法 / WebSocket方向
+
+    func configure(with log: SJLoggerModel,
+                   isSelected: Bool = false,
+                   showCheckmark: Bool = false,
+                   showsHost: Bool = true) {
+        let badgeText: String
+        let badgeColor: UIColor
         if let method = log.method {
-            methodLabel.text = method.rawValue
-            methodLabel.textColor = SJTheme.color(for: method)
-            methodLabel.isHidden = false
-        } else if log.type == .websocket, let dir = log.wsDirection {
-            methodLabel.text = dir.rawValue
-            methodLabel.textColor = dir == .sent ? .systemBlue : .systemGreen
-            methodLabel.isHidden = false
+            badgeText = method.rawValue
+            badgeColor = SJTheme.color(for: method)
+        } else if log.type == .websocket, let direction = log.wsDirection {
+            badgeText = direction.rawValue
+            badgeColor = direction == .sent ? .systemBlue : .systemGreen
         } else {
-            methodLabel.isHidden = true
+            badgeText = log.type.rawValue
+            badgeColor = SJTheme.color(for: log.type)
         }
-        
-        // URL
-        urlLabel.text = log.url
-        
-        // 状态码
+        methodBadge.setText(badgeText, color: badgeColor)
+
+        pathLabel.text = log.shortPath.isEmpty ? log.url : log.shortPath
+        hostLabel.text = log.host
+        hostLabel.isHidden = !showsHost || log.host.isEmpty
+        hostSeparator.isHidden = hostLabel.isHidden
+
         if let statusCode = log.statusCode {
             statusLabel.text = "\(statusCode)"
-            if log.isSuccess {
-                statusLabel.textColor = .systemGreen
-            } else {
-                statusLabel.textColor = .systemRed
-            }
+            statusLabel.textColor = SJTheme.color(forStatus: statusCode)
         } else if log.error != nil {
             statusLabel.text = "Error"
             statusLabel.textColor = .systemRed
@@ -202,26 +155,29 @@ class SJLogCell: UITableViewCell {
             statusLabel.text = "-"
             statusLabel.textColor = .secondaryLabel
         }
-        
-        // 时间
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        timeLabel.text = formatter.string(from: log.startTime)
-        
-        // 耗时（慢请求高亮）
+
         if let duration = log.duration {
-            durationLabel.text = "\(Int(duration))ms"
-            if duration >= SJLoggerConfig.shared.slowRequestThresholdMs {
-                durationLabel.textColor = .systemOrange
-                durationLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-            } else {
-                durationLabel.textColor = .secondaryLabel
-                durationLabel.font = .systemFont(ofSize: 11)
-            }
+            durationLabel.text = duration >= 1_000
+                ? String(format: "%.2f s", duration / 1_000)
+                : "\(Int(duration)) ms"
+            let isSlow = duration >= SJLoggerConfig.shared.slowRequestThresholdMs
+            durationLabel.textColor = isSlow ? .systemOrange : .secondaryLabel
+            durationLabel.font = .systemFont(ofSize: 12, weight: isSlow ? .semibold : .regular)
         } else {
             durationLabel.text = "-"
             durationLabel.textColor = .secondaryLabel
-            durationLabel.font = .systemFont(ofSize: 11)
+            durationLabel.font = .systemFont(ofSize: 12)
         }
+
+        timeLabel.text = Self.timeFormatter.string(from: log.startTime)
+        chevron.isHidden = showCheckmark
+        checkmark.isHidden = !showCheckmark
+        checkmark.image = UIImage(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+        contentView.backgroundColor = isSelected
+            ? SJLoggerConfig.shared.floatingWindowColor.withAlphaComponent(0.08)
+            : .systemBackground
+
+        let hostDescription = log.host.isEmpty ? "" : "，域名 \(log.host)"
+        accessibilityLabel = "\(badgeText)，\(pathLabel.text ?? "")\(hostDescription)，状态 \(statusLabel.text ?? "")，耗时 \(durationLabel.text ?? "")，\(timeLabel.text ?? "")"
     }
 }

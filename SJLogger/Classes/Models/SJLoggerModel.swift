@@ -141,6 +141,28 @@ public class SJLoggerModel: Codable {
         self.requestBody = requestBody
         self.startTime = startTime
     }
+
+    /// 创建独立快照，避免存储队列更新时与 UI 共享同一个可变对象。
+    func snapshot() -> SJLoggerModel {
+        let copy = SJLoggerModel(
+            id: id,
+            type: type,
+            url: url,
+            method: method,
+            requestHeaders: requestHeaders,
+            requestBody: requestBody,
+            startTime: startTime
+        )
+        copy.statusCode = statusCode
+        copy.responseHeaders = responseHeaders
+        copy.responseBody = responseBody
+        copy.error = error
+        copy.endTime = endTime
+        copy.tcpInfo = tcpInfo
+        copy.wsDirection = wsDirection
+        copy.wsEventName = wsEventName
+        return copy
+    }
     
     /// 生成完整的日志文本
     public func generateLogText() -> String {

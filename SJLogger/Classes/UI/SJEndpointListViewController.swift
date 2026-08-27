@@ -35,9 +35,13 @@ public class SJEndpointListViewController: UIViewController {
     private var groups: [SJEndpointGroup] = []
     private var filteredGroups: [SJEndpointGroup] = []
     private var keyword: String = ""
+    private var selectedHost: String?
+    private var filterQuery = SJLogQuery()
     
     /// 点击某接口的回调（若设置则优先于默认push行为）
     public var onSelectPath: ((String) -> Void)?
+    /// 点击接口时同时回传域名，便于下钻后保持当前环境。
+    public var onSelectEndpoint: ((String, String) -> Void)?
     
     // MARK: - 生命周期
     
@@ -77,9 +81,11 @@ public class SJEndpointListViewController: UIViewController {
     // MARK: - 数据
     
     @objc private func loadGroups() {
-        SJLoggerStorage.shared.getEndpointGroups { [weak self] groups in
-            self?.groups = groups
-            self?.applyKeyword()
+        SJLoggerStorage.shared.getAllLogs { [weak self] logs in
+            guard let self = self else { return }
+            let domainLogs = logs.filter { self.selectedHost == nil || $0.host == self.selectedHost }
+            self.groups = SJEndpointGroup.build(from: self.filterQuery.apply(to: domainLogs))
+            self.applyKeyword()
         }
     }
     
@@ -87,6 +93,17 @@ public class SJEndpointListViewController: UIViewController {
     public func setKeyword(_ text: String) {
         keyword = text
         applyKeyword()
+    }
+
+    public func setHost(_ host: String?) {
+        guard selectedHost != host else { return }
+        selectedHost = host
+        if isViewLoaded { loadGroups() }
+    }
+
+    public func setFilterQuery(_ query: SJLogQuery) {
+        filterQuery = query
+        if isViewLoaded { loadGroups() }
     }
     
     private func applyKeyword() {
@@ -118,11 +135,13 @@ extension SJEndpointListViewController: UITableViewDataSource, UITableViewDelega
     
     public func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        let path = filteredGroups[indexPath.row].path
-        if let onSelectPath = onSelectPath {
-            onSelectPath(path)
+        let group = filteredGroups[indexPath.row]
+        if let onSelectEndpoint = onSelectEndpoint {
+            onSelectEndpoint(group.path, group.host)
+        } else if let onSelectPath = onSelectPath {
+            onSelectPath(group.path)
         } else {
-            let vc = SJLogListViewController(fixedPath: path)
+            let vc = SJLogListViewController(fixedPath: group.path)
             navigationController?.pushViewController(vc, animated: true)
         }
     }

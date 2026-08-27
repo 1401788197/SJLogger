@@ -13,6 +13,12 @@ public class SJLogger {
     
     /// 悬浮窗
     private var floatingWindow: SJFloatingWindow?
+
+    /// 当前展示中的日志页面，用于避免连续点击叠加多个全屏页面
+    private weak var presentedLogListNavigationController: UINavigationController?
+
+    /// `present` 动画完成前阻止重复发起展示
+    private var isPresentingLogList = false
     
     private init() {
         // 在初始化时就执行Swizzling，确保即使延迟调用start()也能监听到请求
@@ -29,6 +35,9 @@ public class SJLogger {
         if let config = config {
             config(SJLoggerConfig.shared)
         }
+
+        // stop() 会恢复 Swizzling；再次 start() 时必须重新注入 URLProtocol。
+        SJURLSessionSwizzler.shared.swizzle()
         
         // 如果已经启动，只更新悬浮窗状态
         if isStarted {
@@ -99,17 +108,8 @@ public class SJLogger {
     /// 显示日志列表界面
     /// - Parameter from: 从哪个视图控制器present
     public func showLogList(from viewController: UIViewController? = nil) {
-        DispatchQueue.main.async {
-            let logListVC = SJLogListViewController()
-            let nav = UINavigationController(rootViewController: logListVC)
-            nav.modalPresentationStyle = .fullScreen
-            nav.setNavigationBarHidden(true, animated: false)
-            
-            if let vc = viewController {
-                vc.present(nav, animated: true)
-            } else if let topVC = self.topViewController() {
-                topVC.present(nav, animated: true)
-            }
+        DispatchQueue.main.async { [weak self, weak viewController] in
+            self?.presentLogList(from: viewController)
         }
     }
     
@@ -160,11 +160,66 @@ public class SJLogger {
     }
     
     // MARK: - 辅助方法
+
+    private func presentLogList(from viewController: UIViewController?) {
+        if let current = presentedLogListNavigationController,
+           current.presentingViewController != nil || current.viewIfLoaded?.window != nil {
+            return
+        }
+
+        guard !isPresentingLogList,
+              let presenter = viewController.map({ findTopViewController(from: $0) }) ?? topViewController(),
+              presenter.viewIfLoaded?.window != nil else {
+            return
+        }
+
+        // UIKit 不允许在另一个 present/dismiss 动画中稳定地发起新转场。
+        // 等当前转场完成后重新解析顶部控制器，避免展示到正在消失的页面上。
+        if let coordinator = presenter.transitionCoordinator {
+            isPresentingLogList = true
+            coordinator.animate(alongsideTransition: nil) { [weak self, weak viewController] _ in
+                self?.isPresentingLogList = false
+                self?.showLogList(from: viewController)
+            }
+            return
+        }
+
+        guard !presenter.isBeingPresented,
+              !presenter.isBeingDismissed,
+              presenter.presentedViewController == nil else {
+            return
+        }
+
+        let logListVC = SJLogListViewController()
+        let nav = UINavigationController(rootViewController: logListVC)
+        nav.modalPresentationStyle = .fullScreen
+        nav.setNavigationBarHidden(true, animated: false)
+
+        isPresentingLogList = true
+        presentedLogListNavigationController = nav
+        presenter.present(nav, animated: true)
+
+        // present 失败时 UIKit 不保证调用完成回调，下一轮主线程主动释放尝试状态。
+        DispatchQueue.main.async { [weak self, weak nav] in
+            self?.isPresentingLogList = false
+            if nav?.presentingViewController == nil && nav?.viewIfLoaded?.window == nil {
+                self?.presentedLogListNavigationController = nil
+            }
+        }
+    }
     
     private func topViewController() -> UIViewController? {
-        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let window = windowScene.windows.first(where: { $0.isKeyWindow }),
-              let rootVC = window.rootViewController else {
+        // 悬浮按钮可能属于多个 Scene 中的任意一个，优先使用它实际所在的窗口。
+        let floatingWindowHost = floatingWindow?.window
+        let foregroundWindows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .filter { $0.activationState == .foregroundActive }
+            .flatMap { $0.windows }
+        let window = floatingWindowHost
+            ?? foregroundWindows.first(where: { $0.isKeyWindow })
+            ?? foregroundWindows.first(where: { !$0.isHidden && $0.alpha > 0 })
+
+        guard let rootVC = window?.rootViewController else {
             return nil
         }
         
@@ -172,7 +227,8 @@ public class SJLogger {
     }
     
     private func findTopViewController(from viewController: UIViewController) -> UIViewController {
-        if let presented = viewController.presentedViewController {
+        if let presented = viewController.presentedViewController,
+           !presented.isBeingDismissed {
             return findTopViewController(from: presented)
         }
         
@@ -184,6 +240,11 @@ public class SJLogger {
         if let tab = viewController as? UITabBarController,
            let selected = tab.selectedViewController {
             return findTopViewController(from: selected)
+        }
+
+        if let split = viewController as? UISplitViewController,
+           let last = split.viewControllers.last {
+            return findTopViewController(from: last)
         }
         
         return viewController

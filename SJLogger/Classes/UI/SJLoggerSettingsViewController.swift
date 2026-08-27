@@ -73,6 +73,10 @@ public class SJLoggerSettingsViewController: UIViewController {
                         get: { config.logRequestBody }, set: { config.logRequestBody = $0; config.persistSettings() }),
                 .toggle(title: "记录响应体", subtitle: nil,
                         get: { config.logResponseBody }, set: { config.logResponseBody = $0; config.persistSettings() }),
+                .stepper(title: "响应体记录上限", range: 0...50, step: 1,
+                         get: { Double(config.maxResponseBodySize) / 1024 / 1024 },
+                         set: { config.maxResponseBodySize = Int($0) * 1024 * 1024; config.persistSettings() },
+                         format: { $0 == 0 ? "不限" : "\(Int($0)) MB" }),
                 .toggle(title: "WebSocket 日志", subtitle: nil,
                         get: { config.enableWebSocketLog }, set: { config.enableWebSocketLog = $0; config.persistSettings() }),
                 .toggle(title: "控制台打印", subtitle: nil,
@@ -94,6 +98,10 @@ public class SJLoggerSettingsViewController: UIViewController {
             ]),
             
             Section(header: "存储", footer: "开启后日志会写入磁盘，App 重启不丢失。持久化超过最大空间后会优先丢弃旧日志。", rows: [
+                .stepper(title: "内存日志上限", range: 100...5000, step: 100,
+                         get: { Double(config.maxLogCount) },
+                         set: { config.maxLogCount = Int($0); config.persistSettings() },
+                         format: { "\(Int($0)) 条" }),
                 .toggle(title: "持久化到磁盘", subtitle: nil,
                         get: { config.persistLogs }, set: { config.persistLogs = $0 }),
                 .stepper(title: "持久化最大空间", range: 1...100, step: 1,

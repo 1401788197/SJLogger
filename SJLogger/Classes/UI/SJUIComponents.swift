@@ -6,6 +6,8 @@ class SJCustomNavigationBar: UIView {
     private let leftStack = UIStackView()
     private let rightStack = UIStackView()
     private let titleLabel = UILabel()
+    private let centerContainer = UIView()
+    private var customCenterView: UIView?
     private static let iconButtonSize = CGSize(width: 30, height: 38)
     private static let iconPointSize: CGFloat = 18
     
@@ -19,7 +21,24 @@ class SJCustomNavigationBar: UIView {
     
     func setTitle(_ title: String) {
         titleLabel.text = title
-        titleLabel.isHidden = title.isEmpty
+        titleLabel.isHidden = title.isEmpty || customCenterView != nil
+    }
+
+    func setCenterView(_ view: UIView?) {
+        customCenterView?.removeFromSuperview()
+        customCenterView = view
+        centerContainer.isHidden = view == nil
+        titleLabel.isHidden = view != nil || (titleLabel.text ?? "").isEmpty
+
+        guard let view = view else { return }
+        centerContainer.addSubview(view)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: centerContainer.topAnchor),
+            view.bottomAnchor.constraint(equalTo: centerContainer.bottomAnchor),
+            view.leadingAnchor.constraint(equalTo: centerContainer.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: centerContainer.trailingAnchor)
+        ])
     }
     
     func setLeftButtons(_ buttons: [UIButton]) {
@@ -102,10 +121,12 @@ class SJCustomNavigationBar: UIView {
         addSubview(leftStack)
         addSubview(rightStack)
         addSubview(titleLabel)
+        addSubview(centerContainer)
         
-        [leftStack, rightStack, titleLabel].forEach {
+        [leftStack, rightStack, titleLabel, centerContainer].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
         }
+        centerContainer.isHidden = true
         
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 52),
@@ -119,7 +140,13 @@ class SJCustomNavigationBar: UIView {
             titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leftStack.trailingAnchor, constant: 8),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: rightStack.leadingAnchor, constant: -8)
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: rightStack.leadingAnchor, constant: -8),
+
+            centerContainer.centerXAnchor.constraint(equalTo: centerXAnchor),
+            centerContainer.centerYAnchor.constraint(equalTo: centerYAnchor),
+            centerContainer.leadingAnchor.constraint(greaterThanOrEqualTo: leftStack.trailingAnchor, constant: 8),
+            centerContainer.trailingAnchor.constraint(lessThanOrEqualTo: rightStack.leadingAnchor, constant: -8),
+            centerContainer.heightAnchor.constraint(equalToConstant: 32)
         ])
     }
     
@@ -197,6 +224,11 @@ class SJBadgeLabel: UIView {
     }
     
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var intrinsicContentSize: CGSize {
+        let size = label.intrinsicContentSize
+        return CGSize(width: size.width + hInset * 2, height: size.height)
+    }
     
     /// 设置文本与主色（背景为主色淡化）
     func setText(_ text: String, color: UIColor) {
@@ -204,6 +236,7 @@ class SJBadgeLabel: UIView {
         label.textColor = color
         backgroundColor = color.withAlphaComponent(0.15)
         isHidden = text.isEmpty
+        invalidateIntrinsicContentSize()
     }
     
     /// 实心样式（白字+实色背景）
@@ -212,6 +245,7 @@ class SJBadgeLabel: UIView {
         label.textColor = .white
         backgroundColor = color
         isHidden = text.isEmpty
+        invalidateIntrinsicContentSize()
     }
 }
 
@@ -228,96 +262,128 @@ class PaddingLabel: UILabel {
     }
 }
 
-// MARK: - 顶部统计条
-/// 展示总数 / 成功率 / 平均耗时 / 总流量
+// MARK: - 列表内统计摘要
+/// 默认只占一行，点击后展开平均耗时和流量等次要信息。
 class SJStatsBar: UIView {
-    
-    private let stack = UIStackView()
-    private let totalItem = StatItem(title: "总数")
-    private let rateItem = StatItem(title: "成功率")
-    private let avgItem = StatItem(title: "平均耗时")
-    private let sizeItem = StatItem(title: "总流量")
-    
+    var onPreferredHeightChange: ((CGFloat) -> Void)?
+
+    private let summaryLabel = UILabel()
+    private let detailLabel = UILabel()
+    private let chevron = UIImageView(image: UIImage(systemName: "chevron.down"))
+    private let separator = UIView()
+    private var isExpanded = false
+
+    var preferredHeight: CGFloat { isExpanded ? 68 : 44 }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = .secondarySystemBackground
-        stack.axis = .horizontal
-        stack.distribution = .fillEqually
-        stack.alignment = .center
-        addSubview(stack)
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        backgroundColor = .systemBackground
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+
+        summaryLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        summaryLabel.textColor = .secondaryLabel
+        summaryLabel.numberOfLines = 1
+
+        detailLabel.font = .systemFont(ofSize: 11)
+        detailLabel.textColor = .tertiaryLabel
+        detailLabel.numberOfLines = 1
+        detailLabel.isHidden = true
+
+        chevron.tintColor = .tertiaryLabel
+        chevron.contentMode = .scaleAspectFit
+        separator.backgroundColor = .separator
+
+        let labels = UIStackView(arrangedSubviews: [summaryLabel, detailLabel])
+        labels.axis = .vertical
+        labels.spacing = 5
+        labels.alignment = .leading
+
+        addSubview(labels)
+        addSubview(chevron)
+        addSubview(separator)
+        [labels, chevron, separator].forEach { $0.translatesAutoresizingMaskIntoConstraints = false }
+
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor)
+            labels.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            labels.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -10),
+            labels.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            chevron.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            chevron.centerYAnchor.constraint(equalTo: centerYAnchor),
+            chevron.widthAnchor.constraint(equalToConstant: 12),
+            chevron.heightAnchor.constraint(equalToConstant: 12),
+
+            separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            separator.trailingAnchor.constraint(equalTo: trailingAnchor),
+            separator.bottomAnchor.constraint(equalTo: bottomAnchor),
+            separator.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale)
         ])
-        [totalItem, rateItem, avgItem, sizeItem].forEach { stack.addArrangedSubview($0) }
+
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(toggleExpanded)))
     }
-    
+
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    
+
     func update(with logs: [SJLoggerModel]) {
         let total = logs.count
         let success = logs.filter { $0.isSuccess }.count
+        let failed = logs.filter {
+            $0.error != nil || (($0.statusCode ?? 0) >= 400)
+        }.count
         let rate = total > 0 ? Int((Double(success) / Double(total) * 100).rounded()) : 0
         let durations = logs.compactMap { $0.duration }
-        let avg = durations.isEmpty ? 0 : Int(durations.reduce(0, +) / Double(durations.count))
+        let average = durations.isEmpty ? 0 : Int(durations.reduce(0, +) / Double(durations.count))
         let totalSize = logs.reduce(0) { $0 + $1.responseSize }
-        
-        totalItem.setValue("\(total)", color: .label)
-        rateItem.setValue("\(rate)%", color: rate >= 90 ? .systemGreen : (rate >= 60 ? .systemOrange : .systemRed))
-        avgItem.setValue("\(avg)ms", color: .label)
-        sizeItem.setValue(ByteCountFormatter.string(fromByteCount: Int64(totalSize), countStyle: .binary), color: .label)
+        let size = ByteCountFormatter.string(fromByteCount: Int64(totalSize), countStyle: .binary)
+
+        summaryLabel.text = "共 \(total) 条 · 成功 \(success) · 失败 \(failed)"
+        detailLabel.text = "成功率 \(rate)% · 平均 \(average)ms · 流量 \(size)"
+        accessibilityLabel = "共 \(total) 条，成功 \(success) 条，失败 \(failed) 条，成功率 \(rate)%，平均耗时 \(average) 毫秒，流量 \(size)"
+        accessibilityHint = isExpanded ? "轻点收起统计详情" : "轻点展开统计详情"
     }
-    
-    private class StatItem: UIView {
-        private let valueLabel = UILabel()
-        private let titleLabel = UILabel()
-        init(title: String) {
-            super.init(frame: .zero)
-            valueLabel.font = .systemFont(ofSize: 15, weight: .bold)
-            valueLabel.textColor = .label
-            valueLabel.textAlignment = .center
-            valueLabel.text = "-"
-            titleLabel.font = .systemFont(ofSize: 10)
-            titleLabel.textColor = .secondaryLabel
-            titleLabel.textAlignment = .center
-            titleLabel.text = title
-            let v = UIStackView(arrangedSubviews: [valueLabel, titleLabel])
-            v.axis = .vertical
-            v.spacing = 1
-            addSubview(v)
-            v.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                v.centerXAnchor.constraint(equalTo: centerXAnchor),
-                v.centerYAnchor.constraint(equalTo: centerYAnchor)
-            ])
-        }
-        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-        func setValue(_ text: String, color: UIColor) {
-            valueLabel.text = text
-            valueLabel.textColor = color
-        }
+
+    @objc private func toggleExpanded() {
+        isExpanded.toggle()
+        detailLabel.isHidden = !isExpanded
+        chevron.transform = isExpanded ? CGAffineTransform(rotationAngle: .pi) : .identity
+        accessibilityHint = isExpanded ? "轻点收起统计详情" : "轻点展开统计详情"
+        onPreferredHeightChange?(preferredHeight)
     }
 }
 
-// MARK: - 横向分类标签栏
-class SJChipsBar: UIView {
-    
+// MARK: - 域名与快捷筛选栏
+class SJCompactFilterBar: UIView {
     var onSelect: ((Int) -> Void)?
+
     private let scrollView = UIScrollView()
     private let stack = UIStackView()
-    private var buttons: [UIButton] = []
+    private let domainButton = UIButton(type: .system)
+    private var filterButtons: [UIButton] = []
     private var selectedIndex = 0
-    
+
     init(titles: [String]) {
         super.init(frame: .zero)
+        backgroundColor = .systemBackground
+
         scrollView.showsHorizontalScrollIndicator = false
+        scrollView.alwaysBounceHorizontal = true
+        scrollView.contentInsetAdjustmentBehavior = .never
+
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 8
+
+        configureDomainButton()
+        stack.addArrangedSubview(domainButton)
+        titles.enumerated().forEach { index, title in
+            let button = makeFilterButton(title: title, index: index)
+            filterButtons.append(button)
+            stack.addArrangedSubview(button)
+        }
+
         addSubview(scrollView)
         scrollView.addSubview(stack)
-        stack.axis = .horizontal
-        stack.spacing = 8
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         stack.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -325,42 +391,82 @@ class SJChipsBar: UIView {
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 2),
-            stack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -2),
-            stack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -12),
-            stack.heightAnchor.constraint(equalTo: scrollView.heightAnchor, constant: -4)
+            stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 3),
+            stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -3),
+            stack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -12),
+            stack.heightAnchor.constraint(equalToConstant: 34),
+            domainButton.widthAnchor.constraint(lessThanOrEqualToConstant: 230)
         ])
-        for (i, title) in titles.enumerated() {
-            let btn = UIButton(type: .system)
-            btn.setTitle(title, for: .normal)
-            btn.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
-            btn.tag = i
-            btn.layer.cornerRadius = 14
-            btn.contentEdgeInsets = UIEdgeInsets(top: 4, left: 14, bottom: 4, right: 14)
-            btn.addTarget(self, action: #selector(tap(_:)), for: .touchUpInside)
-            buttons.append(btn)
-            stack.addArrangedSubview(btn)
-        }
         updateStyles()
     }
-    
+
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    
-    @objc private func tap(_ sender: UIButton) {
+
+    func setDomain(title: String, menu: UIMenu) {
+        var configuration = domainButton.configuration ?? .plain()
+        configuration.title = "\(title) ⌄"
+        domainButton.configuration = configuration
+        domainButton.menu = menu
+        domainButton.accessibilityLabel = "当前域名，\(title)"
+        domainButton.accessibilityHint = "轻点切换域名"
+    }
+
+    func setFilterTitles(_ titles: [String]) {
+        for (index, title) in titles.enumerated() where index < filterButtons.count {
+            filterButtons[index].configuration?.title = title
+        }
+    }
+
+    func setSelectedIndex(_ index: Int) {
+        guard filterButtons.indices.contains(index) else { return }
+        selectedIndex = index
+        updateStyles()
+    }
+
+    private func configureDomainButton() {
+        var configuration = UIButton.Configuration.plain()
+        configuration.image = UIImage(systemName: "globe")
+        configuration.imagePadding = 6
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10)
+        configuration.baseForegroundColor = .label
+        domainButton.configuration = configuration
+        domainButton.backgroundColor = .secondarySystemBackground
+        domainButton.layer.cornerRadius = 14
+        domainButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
+        domainButton.titleLabel?.lineBreakMode = .byTruncatingMiddle
+        domainButton.showsMenuAsPrimaryAction = true
+        domainButton.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+    }
+
+    private func makeFilterButton(title: String, index: Int) -> UIButton {
+        let button = UIButton(type: .system)
+        var configuration = UIButton.Configuration.plain()
+        configuration.title = title
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12)
+        button.configuration = configuration
+        button.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
+        button.tag = index
+        button.layer.cornerRadius = 14
+        button.addTarget(self, action: #selector(tapFilter(_:)), for: .touchUpInside)
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return button
+    }
+
+    @objc private func tapFilter(_ sender: UIButton) {
         selectedIndex = sender.tag
         updateStyles()
         onSelect?(selectedIndex)
     }
-    
+
     private func updateStyles() {
-        for (i, btn) in buttons.enumerated() {
-            if i == selectedIndex {
-                btn.backgroundColor = SJLoggerConfig.shared.floatingWindowColor
-                btn.setTitleColor(.white, for: .normal)
+        for (index, button) in filterButtons.enumerated() {
+            if index == selectedIndex {
+                button.backgroundColor = SJLoggerConfig.shared.floatingWindowColor
+                button.configuration?.baseForegroundColor = .white
             } else {
-                btn.backgroundColor = .secondarySystemBackground
-                btn.setTitleColor(.label, for: .normal)
+                button.backgroundColor = .secondarySystemBackground
+                button.configuration?.baseForegroundColor = .label
             }
         }
     }

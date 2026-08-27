@@ -74,7 +74,11 @@ public class SJLoggerConfig {
     public var isEnabled: Bool = true
     
     /// 当前内存列表最大日志数量，持久化日志按磁盘空间限制
-    public var maxLogCount: Int = 1000
+    public var maxLogCount: Int = 1000 {
+        didSet {
+            if maxLogCount < 1 { maxLogCount = 1 }
+        }
+    }
     
     /// 需要监听的URL模式（正则表达式）
     public var monitoredURLPatterns: [String] = []
@@ -89,7 +93,11 @@ public class SJLoggerConfig {
     public var logResponseBody: Bool = true
     
     /// 响应体最大记录大小（字节），超过则不记录，0表示不限制
-    public var maxResponseBodySize: Int = 1024 * 1024 // 1MB
+    public var maxResponseBodySize: Int = 1024 * 1024 {
+        didSet {
+            if maxResponseBodySize < 0 { maxResponseBodySize = 0 }
+        }
+    }
     
     /// 是否启用WebSocket日志
     public var enableWebSocketLog: Bool = true
@@ -107,7 +115,10 @@ public class SJLoggerConfig {
     
     /// 持久化日志文件最大大小（字节），超过后优先丢弃旧日志，0 表示不限制
     public var maxPersistedLogFileSize: Int = 10 * 1024 * 1024 {
-        didSet { saveSettings() }
+        didSet {
+            if maxPersistedLogFileSize < 0 { maxPersistedLogFileSize = 0 }
+            saveSettings()
+        }
     }
     
     /// 请求/响应体展示用解密器。仅运行时生效，不持久化。
@@ -120,7 +131,10 @@ public class SJLoggerConfig {
     
     /// 慢请求阈值（毫秒），用于高亮与筛选
     public var slowRequestThresholdMs: Double = 1000 {
-        didSet { saveSettings() }
+        didSet {
+            if slowRequestThresholdMs < 0 { slowRequestThresholdMs = 0 }
+            saveSettings()
+        }
     }
     
     /// 在列表交互（滚动/搜索）时自动切换到固定模式
@@ -143,6 +157,7 @@ public class SJLoggerConfig {
     // MARK: - 设置持久化（UserDefaults）
     
     private static let defaultsKey = "com.sjlogger.config"
+    private let regexCache = NSCache<NSString, NSRegularExpression>()
     
     private func saveSettings() {
         let dict: [String: Any] = [
@@ -154,6 +169,7 @@ public class SJLoggerConfig {
             "maxLogCount": maxLogCount,
             "logRequestBody": logRequestBody,
             "logResponseBody": logResponseBody,
+            "maxResponseBodySize": maxResponseBodySize,
             "enableWebSocketLog": enableWebSocketLog,
             "printToConsole": printToConsole,
             "showFloatingWindow": showFloatingWindow,
@@ -172,6 +188,7 @@ public class SJLoggerConfig {
         if let v = dict["maxLogCount"] as? Int { maxLogCount = v }
         if let v = dict["logRequestBody"] as? Bool { logRequestBody = v }
         if let v = dict["logResponseBody"] as? Bool { logResponseBody = v }
+        if let v = dict["maxResponseBodySize"] as? Int { maxResponseBodySize = v }
         if let v = dict["enableWebSocketLog"] as? Bool { enableWebSocketLog = v }
         if let v = dict["printToConsole"] as? Bool { printToConsole = v }
         if let v = dict["showFloatingWindow"] as? Bool { showFloatingWindow = v }
@@ -222,7 +239,11 @@ public class SJLoggerConfig {
     /// 检查URL是否匹配模式列表
     private func isURLMatched(url: String, patterns: [String]) -> Bool {
         for pattern in patterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+            let cacheKey = pattern as NSString
+            let regex = regexCache.object(forKey: cacheKey)
+                ?? (try? NSRegularExpression(pattern: pattern, options: .caseInsensitive))
+            if let regex = regex {
+                regexCache.setObject(regex, forKey: cacheKey)
                 let range = NSRange(url.startIndex..., in: url)
                 if regex.firstMatch(in: url, options: [], range: range) != nil {
                     return true

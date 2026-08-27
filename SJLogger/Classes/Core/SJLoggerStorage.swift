@@ -17,6 +17,9 @@ public class SJLoggerStorage {
     
     /// 落盘节流工作项
     private var persistWorkItem: DispatchWorkItem?
+
+    /// 每次安排或取消持久化时递增，防止旧工作项在清理后把文件重新写回
+    private var persistGeneration: UInt = 0
     
     private init() {}
     
@@ -26,10 +29,11 @@ public class SJLoggerStorage {
         queue.async(flags: .barrier) { [weak self] in
             guard let self = self else { return }
             
-            self.logs.insert(log, at: 0) // 最新的在前面
+            let storedLog = log.snapshot()
+            self.logs.insert(storedLog, at: 0) // 最新的在前面
             
             // 检查是否超过最大数量
-            let maxCount = SJLoggerConfig.shared.maxLogCount
+            let maxCount = max(1, SJLoggerConfig.shared.maxLogCount)
             if self.logs.count > maxCount {
                 self.logs = Array(self.logs.prefix(maxCount))
             }
@@ -43,7 +47,7 @@ public class SJLoggerStorage {
             
             // 打印到控制台
             if SJLoggerConfig.shared.printToConsole {
-                print(log.generateLogText())
+                print(storedLog.generateLogText())
             }
         }
     }
@@ -54,13 +58,30 @@ public class SJLoggerStorage {
             guard let self = self else { return }
             
             if let index = self.logs.firstIndex(where: { $0.id == log.id }) {
-                self.logs[index] = log
+                self.logs[index] = log.snapshot()
                 self.schedulePersist(mergeWithPersistedLogs: true)
                 
                 // 发送通知
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(name: SJLoggerStorage.logsDidUpdateNotification, object: nil)
                 }
+            }
+        }
+    }
+
+    /// 在存储队列内原子更新日志，避免网络回调与 UI 并发读写同一模型。
+    func updateLog(byId id: String, mutate: @escaping (SJLoggerModel) -> Void) {
+        queue.async(flags: .barrier) { [weak self] in
+            guard let self = self,
+                  let index = self.logs.firstIndex(where: { $0.id == id }) else { return }
+
+            let updatedLog = self.logs[index].snapshot()
+            mutate(updatedLog)
+            self.logs[index] = updatedLog
+            self.schedulePersist(mergeWithPersistedLogs: true)
+
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: SJLoggerStorage.logsDidUpdateNotification, object: nil)
             }
         }
     }
@@ -74,7 +95,7 @@ public class SJLoggerStorage {
                 return
             }
             
-            let logs = self.logs
+            let logs = self.logs.map { $0.snapshot() }
             DispatchQueue.main.async {
                 completion(logs)
             }
@@ -89,7 +110,7 @@ public class SJLoggerStorage {
                 return
             }
             
-            let log = self.logs.first { $0.id == id }
+            let log = self.logs.first { $0.id == id }?.snapshot()
             DispatchQueue.main.async {
                 completion(log)
             }
@@ -110,7 +131,7 @@ public class SJLoggerStorage {
                 log.method?.rawValue.lowercased().contains(keyword) == true ||
                 log.requestBodyString?.lowercased().contains(keyword) == true ||
                 log.responseBodyString?.lowercased().contains(keyword) == true
-            }
+            }.map { $0.snapshot() }
             
             DispatchQueue.main.async {
                 completion(filtered)
@@ -126,7 +147,7 @@ public class SJLoggerStorage {
                 return
             }
             
-            let filtered = self.logs.filter { $0.type == type }
+            let filtered = self.logs.filter { $0.type == type }.map { $0.snapshot() }
             DispatchQueue.main.async {
                 completion(filtered)
             }
@@ -141,7 +162,7 @@ public class SJLoggerStorage {
                 return
             }
             
-            let filtered = self.logs.filter { $0.statusCode == code }
+            let filtered = self.logs.filter { $0.statusCode == code }.map { $0.snapshot() }
             DispatchQueue.main.async {
                 completion(filtered)
             }
@@ -156,7 +177,7 @@ public class SJLoggerStorage {
                 return
             }
             
-            let filtered = self.logs.filter { !$0.isSuccess || $0.error != nil }
+            let filtered = self.logs.filter { !$0.isSuccess || $0.error != nil }.map { $0.snapshot() }
             DispatchQueue.main.async {
                 completion(filtered)
             }
@@ -344,7 +365,7 @@ public class SJLoggerStorage {
                 DispatchQueue.main.async { completion([]) }
                 return
             }
-            let filtered = self.logs.filter { $0.path == path }
+            let filtered = self.logs.filter { $0.path == path }.map { $0.snapshot() }
             DispatchQueue.main.async { completion(filtered) }
         }
     }
@@ -357,7 +378,7 @@ public class SJLoggerStorage {
                 DispatchQueue.main.async { completion([]) }
                 return
             }
-            let filtered = criteria.apply(to: self.logs)
+            let filtered = criteria.apply(to: self.logs).map { $0.snapshot() }
             DispatchQueue.main.async { completion(filtered) }
         }
     }
@@ -380,18 +401,23 @@ public class SJLoggerStorage {
     private func schedulePersist(mergeWithPersistedLogs: Bool) {
         guard SJLoggerConfig.shared.persistLogs else { return }
         persistWorkItem?.cancel()
+        persistGeneration &+= 1
+        let generation = persistGeneration
         let work = DispatchWorkItem { [weak self] in
-            self?.writeToDisk(mergeWithPersistedLogs: mergeWithPersistedLogs)
+            self?.writeToDisk(mergeWithPersistedLogs: mergeWithPersistedLogs,
+                              generation: generation)
         }
         persistWorkItem = work
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.8, execute: work)
     }
     
     /// 立即将日志写入磁盘
-    private func writeToDisk(mergeWithPersistedLogs: Bool) {
-        guard SJLoggerConfig.shared.persistLogs, let url = persistFileURL else { return }
+    private func writeToDisk(mergeWithPersistedLogs: Bool, generation: UInt) {
         queue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self,
+                  generation == self.persistGeneration,
+                  SJLoggerConfig.shared.persistLogs,
+                  let url = self.persistFileURL else { return }
             var snapshot = self.logs
             if mergeWithPersistedLogs {
                 snapshot = self.mergedWithPersistedLogs(snapshot, from: url)
@@ -435,8 +461,13 @@ public class SJLoggerStorage {
     
     /// 清空磁盘上的持久化文件
     public func clearPersistedLogs() {
-        guard let url = persistFileURL else { return }
-        persistWorkItem?.cancel()
-        try? FileManager.default.removeItem(at: url)
+        queue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
+            self.persistGeneration &+= 1
+            self.persistWorkItem?.cancel()
+            self.persistWorkItem = nil
+            guard let url = self.persistFileURL else { return }
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }

@@ -47,7 +47,7 @@ SJLogger.shared.start { config in
     // 是否启用日志记录（默认：true）
     config.isEnabled = true
     
-    // 最大日志数量，超过后自动删除旧日志（默认：1000）
+    // 内存日志最大数量，超过后自动删除旧日志（默认：1000，最小：1）
     config.maxLogCount = 500
     
     // 是否显示悬浮窗（默认：true）
@@ -73,16 +73,16 @@ SJLogger.shared.start { config in
 }
 ```
 
-### TCP日志配置
+### WebSocket 日志配置
 
 ```swift
 SJLogger.shared.start { config in
-    // 是否启用TCP日志（默认：true）
-    config.enableTCPLog = true
+    config.enableWebSocketLog = true
 }
 
-// 也可以动态开关
-SJLogger.shared.setTCPLogEnabled(true)
+// 手动记录收发事件；Starscream 项目可使用 SJLogger/Starscream 子库自动代理
+SJLogger.logWebSocket(url: "wss://example.com/socket", event: .text("server message"))
+SJLogger.logWebSocketSent(url: "wss://example.com/socket", text: "client message")
 ```
 
 ## URL过滤配置
@@ -179,7 +179,7 @@ SJLogger.shared.getStatistics { stats in
   - 成功请求（2xx状态码）
   - 失败请求（非2xx或有错误）
   - HTTP/HTTPS
-  - TCP
+  - WebSocket
 - **排序**：最新的日志在最上面
 - **操作**：左滑日志项可以删除或分享
 
@@ -200,13 +200,14 @@ SJLogger.shared.getStatistics { stats in
   - 响应头
   - 响应体（支持点击复制）
   
-- **TCP信息**（如果有）
-  - 连接状态
-  - 数据传输统计
+- **WebSocket 信息**（如果有）
+  - 连接、断开、错误和 Ping/Pong
+  - 文本、二进制收发消息及方向
 
 - **操作**
   - 右上角复制按钮：复制完整日志
   - 右上角分享按钮：分享日志
+  - 支持复制 cURL、导出 HAR 和多选导出
 
 ## 高级用法
 
@@ -236,8 +237,8 @@ SJLogger.shared.setEnabled(false)
 SJLogger.shared.showFloatingWindow()
 SJLogger.shared.hideFloatingWindow()
 
-// 启用/禁用TCP日志
-SJLogger.shared.setTCPLogEnabled(true)
+// 启用/禁用 WebSocket 日志
+SJLoggerConfig.shared.enableWebSocketLog = true
 ```
 
 ### 自定义悬浮窗触发
@@ -336,9 +337,9 @@ A: 检查以下几点：
 ### Q: 日志太多怎么办？
 
 A: 可以：
-1. 设置 `config.maxLogCount` 限制数量
+1. 设置 `config.maxLogCount` 限制内存日志数量
 2. 使用 `addIgnoredURL` 忽略不需要的请求
-3. 定期调用 `clearLogs()` 清除日志
+3. 定期调用 `clearLogs()` 清除内存日志；磁盘日志可在设置页单独清理
 
 ### Q: 如何只监控特定接口？
 
@@ -367,8 +368,9 @@ SJLogger.shared.start()
 
 1. **合理设置日志数量**：`maxLogCount` 建议不超过1000
 2. **限制响应体大小**：对于大文件下载，建议设置 `maxResponseBodySize`
-3. **忽略静态资源**：图片、CSS、JS等静态资源建议忽略
-4. **Release版本禁用**：生产环境务必禁用SJLogger
+3. **限制磁盘空间**：使用 `maxPersistedLogFileSize` 控制持久化文件大小
+4. **忽略静态资源**：图片、CSS、JS等静态资源建议忽略
+5. **Release版本禁用**：生产环境务必禁用SJLogger
 
 ## 安全建议
 

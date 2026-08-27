@@ -180,7 +180,7 @@ class SJFloatingWindow: UIView {
 
 ### 3. 数据压缩
 
-- 对于大型响应体，只记录前N个字节
+- 响应体超过配置上限后不再缓存，并立即释放已缓存数据
 - 二进制数据转换为十六进制字符串
 
 ## 安全考虑
@@ -189,7 +189,7 @@ class SJFloatingWindow: UIView {
 
 - 支持URL过滤，可以忽略包含敏感信息的请求
 - 建议仅在Debug模式使用
-- 不持久化日志到磁盘
+- 支持日志持久化，默认写入 Caches；分享或提交日志前需检查敏感信息
 
 ### 2. 内存安全
 
@@ -202,7 +202,6 @@ class SJFloatingWindow: UIView {
 ### 系统要求
 
 - iOS 15.0+（主要功能）
-- iOS 12.0+（TCP监控需要）
 
 ### 第三方库兼容性
 
@@ -217,15 +216,13 @@ class SJFloatingWindow: UIView {
 ## 已知限制
 
 1. **无法拦截 CFNetwork 直接调用**：如果第三方库直接使用 CFNetwork API，无法拦截
-2. **WebSocket 支持有限**：目前只能记录握手请求，无法记录消息内容
+2. **WebSocket 需接入**：Core 提供手动事件记录，Starscream 可通过可选子库代理；其他 WebSocket 库不会自动采集消息
 3. **上传进度**：暂不支持显示上传进度
 4. **下载进度**：暂不支持显示下载进度
 
 ## 未来计划
 
-- [ ] 支持 WebSocket 消息监控
 - [ ] 支持请求/响应修改（Mock功能）
-- [ ] 支持导出为 HAR 格式
 - [ ] 支持请求重放
 - [ ] 支持性能分析图表
 - [ ] 支持 gRPC 请求监控

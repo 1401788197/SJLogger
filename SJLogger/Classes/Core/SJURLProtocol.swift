@@ -1,5 +1,31 @@
 import Foundation
 
+/// 仅在配置允许的范围内缓存响应体，避免大下载把完整内容留在内存中。
+struct SJResponseBodyBuffer {
+    let limit: Int
+    private(set) var data = Data()
+    private(set) var exceededLimit = false
+
+    init(limit: Int) {
+        self.limit = max(0, limit)
+    }
+
+    mutating func append(_ chunk: Data) {
+        guard !exceededLimit, !chunk.isEmpty else { return }
+        if limit > 0 && (data.count > limit || chunk.count > limit - data.count) {
+            data.removeAll(keepingCapacity: false)
+            exceededLimit = true
+            return
+        }
+        data.append(chunk)
+    }
+
+    var capturedData: Data? {
+        guard !exceededLimit, !data.isEmpty else { return nil }
+        return data
+    }
+}
+
 // MARK: - 网络请求拦截器
 /// 基于URLProtocol的网络请求拦截器，用于捕获所有网络请求
 public class SJURLProtocol: URLProtocol {
@@ -7,8 +33,10 @@ public class SJURLProtocol: URLProtocol {
     private static let requestHandledKey = "SJURLProtocolHandled"
     private var session: URLSession?
     private var dataTask: URLSessionDataTask?
-    private var responseData: Data?
-    private var currentLog: SJLoggerModel?
+    private var responseBodyBuffer: SJResponseBodyBuffer?
+    private var currentLogID: String?
+    private var hasForwardedRedirect = false
+    private let stateLock = NSLock()
     
     // MARK: - URLProtocol Override
     
@@ -19,9 +47,11 @@ public class SJURLProtocol: URLProtocol {
             return false
         }
         
-        // 检查是否需要监控
-        guard let url = request.url?.absoluteString else { return false }
-        return SJLoggerConfig.shared.shouldMonitor(url: url)
+        // 只处理 URLSession 的 HTTP(S) 请求，其他协议由系统或对应库处理。
+        guard let url = request.url,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return false }
+        return SJLoggerConfig.shared.shouldMonitor(url: url.absoluteString)
     }
     
     /// 返回规范化的请求
@@ -37,31 +67,53 @@ public class SJURLProtocol: URLProtocol {
         
         // 标记已处理
         URLProtocol.setProperty(true, forKey: SJURLProtocol.requestHandledKey, in: mutableRequest)
+
+        let config = SJLoggerConfig.shared
+        let requestBody = Self.captureRequestBody(from: mutableRequest,
+                                                  enabled: config.logRequestBody)
         
         // 创建日志记录
-        let log = createLog(from: request)
-        currentLog = log
+        let log = createLog(from: mutableRequest as URLRequest, requestBody: requestBody)
+        stateLock.lock()
+        currentLogID = log.id
+        hasForwardedRedirect = false
+        responseBodyBuffer = config.logResponseBody
+            ? SJResponseBodyBuffer(limit: config.maxResponseBodySize)
+            : nil
+        stateLock.unlock()
         SJLoggerStorage.shared.addLog(log)
         
         // 创建会话
         let configuration = URLSessionConfiguration.default
-        session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+        let activeSession = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
         
         // 创建任务
-        dataTask = session?.dataTask(with: mutableRequest as URLRequest)
-        dataTask?.resume()
+        let task = activeSession.dataTask(with: mutableRequest as URLRequest)
+        stateLock.lock()
+        session = activeSession
+        dataTask = task
+        stateLock.unlock()
+        task.resume()
     }
     
     /// 停止加载
     public override func stopLoading() {
-        dataTask?.cancel()
-        session?.invalidateAndCancel()
+        stateLock.lock()
+        let task = dataTask
+        let activeSession = session
+        dataTask = nil
+        session = nil
+        stateLock.unlock()
+
+        task?.cancel()
+        activeSession?.invalidateAndCancel()
+        finishCurrentLog(with: task?.response, error: URLError(.cancelled))
     }
     
     // MARK: - Helper Methods
     
     /// 创建日志对象
-    private func createLog(from request: URLRequest) -> SJLoggerModel {
+    private func createLog(from request: URLRequest, requestBody: Data?) -> SJLoggerModel {
         let url = request.url?.absoluteString ?? ""
         let methodString = request.httpMethod ?? "GET"
         let method = SJHTTPMethod(rawValue: methodString.uppercased()) ?? .get
@@ -84,52 +136,104 @@ public class SJURLProtocol: URLProtocol {
             headers = allHeaders
         }
         
-        // 获取请求体
-        var body: Data?
-        if SJLoggerConfig.shared.logRequestBody {
-            body = request.httpBody ?? request.httpBodyStream?.readData()
-        }
-        
         return SJLoggerModel(
             type: type,
             url: url,
             method: method,
             requestHeaders: headers,
-            requestBody: body,
+            requestBody: requestBody,
             startTime: Date()
         )
     }
+
+    /// 读取流式请求体后将数据回填到转发请求，避免采集动作消费原始 InputStream。
+    static func captureRequestBody(from request: NSMutableURLRequest, enabled: Bool) -> Data? {
+        guard enabled else { return nil }
+        if let body = request.httpBody {
+            return body
+        }
+        guard let body = request.httpBodyStream?.readData() else { return nil }
+        request.httpBodyStream = nil
+        request.httpBody = body
+        return body
+    }
+
+    /// 重定向交回外层 URLProtocol 系统前移除内部标记，让新地址可以再次被记录。
+    static func requestForFollowingRedirect(_ request: URLRequest) -> URLRequest {
+        guard let mutableRequest = (request as NSURLRequest).mutableCopy() as? NSMutableURLRequest else {
+            return request
+        }
+        URLProtocol.removeProperty(forKey: requestHandledKey, in: mutableRequest)
+        return mutableRequest as URLRequest
+    }
+
+    private func appendResponseData(_ data: Data) {
+        stateLock.lock()
+        if !hasForwardedRedirect {
+            responseBodyBuffer?.append(data)
+        }
+        stateLock.unlock()
+    }
+
+    private func shouldForwardClientCallbacks() -> Bool {
+        stateLock.lock()
+        let shouldForward = !hasForwardedRedirect
+        stateLock.unlock()
+        return shouldForward
+    }
+
+    private func markRedirectAsForwarded() {
+        stateLock.lock()
+        hasForwardedRedirect = true
+        stateLock.unlock()
+    }
+
+    /// stop、redirect 和 completion 可能紧邻发生；只允许其中一个结束并写回日志。
+    private func finishCurrentLog(with response: URLResponse?, error: Error?) {
+        stateLock.lock()
+        guard let logID = currentLogID else {
+            stateLock.unlock()
+            return
+        }
+        let data = responseBodyBuffer?.capturedData
+        currentLogID = nil
+        responseBodyBuffer = nil
+        stateLock.unlock()
+
+        updateLog(logID: logID, with: response, data: data, error: error)
+    }
+
+    private func releaseSession(_ completedSession: URLSession) {
+        stateLock.lock()
+        if session === completedSession {
+            session = nil
+            dataTask = nil
+        }
+        stateLock.unlock()
+        completedSession.finishTasksAndInvalidate()
+    }
     
     /// 更新日志响应信息
-    private func updateLog(with response: URLResponse?, data: Data?, error: Error?) {
-        guard let log = currentLog else { return }
-        
-        log.endTime = Date()
-        
+    private func updateLog(logID: String, with response: URLResponse?, data: Data?, error: Error?) {
+        let endTime = Date()
+        var statusCode: Int?
+        var responseHeaders: [String: String]?
         if let httpResponse = response as? HTTPURLResponse {
-            log.statusCode = httpResponse.statusCode
-            
+            statusCode = httpResponse.statusCode
             var headers: [String: String] = [:]
             for (key, value) in httpResponse.allHeaderFields {
-                if let key = key as? String, let value = value as? String {
-                    headers[key] = value
-                }
+                headers[String(describing: key)] = String(describing: value)
             }
-            log.responseHeaders = headers
+            responseHeaders = headers
         }
-        
-        if let error = error {
-            log.error = error.localizedDescription
+
+        SJLoggerStorage.shared.updateLog(byId: logID) { log in
+            log.endTime = endTime
+            log.statusCode = statusCode
+            log.responseHeaders = responseHeaders
+            log.error = error?.localizedDescription
+            log.responseBody = data
         }
-        
-        if let data = data, SJLoggerConfig.shared.logResponseBody {
-            let maxSize = SJLoggerConfig.shared.maxResponseBodySize
-            if maxSize == 0 || data.count <= maxSize {
-                log.responseBody = data
-            }
-        }
-        
-        SJLoggerStorage.shared.updateLog(log)
     }
 }
 
@@ -137,31 +241,39 @@ public class SJURLProtocol: URLProtocol {
 extension SJURLProtocol: URLSessionDataDelegate {
     
     public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard shouldForwardClientCallbacks() else {
+            completionHandler(.cancel)
+            return
+        }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .allowed)
         completionHandler(.allow)
     }
     
     public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        if responseData == nil {
-            responseData = Data()
-        }
-        responseData?.append(data)
+        guard shouldForwardClientCallbacks() else { return }
+        appendResponseData(data)
         client?.urlProtocol(self, didLoad: data)
     }
     
     public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error = error {
-            client?.urlProtocol(self, didFailWithError: error)
-        } else {
-            client?.urlProtocolDidFinishLoading(self)
+        if shouldForwardClientCallbacks() {
+            if let error = error {
+                client?.urlProtocol(self, didFailWithError: error)
+            } else {
+                client?.urlProtocolDidFinishLoading(self)
+            }
         }
         
-        updateLog(with: task.response, data: responseData, error: error)
+        finishCurrentLog(with: task.response, error: error)
+        releaseSession(session)
     }
     
     public func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        client?.urlProtocol(self, wasRedirectedTo: request, redirectResponse: response)
-        completionHandler(request)
+        markRedirectAsForwarded()
+        finishCurrentLog(with: response, error: nil)
+        let redirectedRequest = Self.requestForFollowingRedirect(request)
+        client?.urlProtocol(self, wasRedirectedTo: redirectedRequest, redirectResponse: response)
+        completionHandler(nil)
     }
     
     public func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
