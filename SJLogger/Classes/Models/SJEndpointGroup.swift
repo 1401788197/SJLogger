@@ -63,7 +63,7 @@ extension SJEndpointGroup {
             guard let items = buckets[key], let latest = items.first else { continue }
             
             let success = items.filter { $0.isSuccess }.count
-            let failed = items.count - success
+            let failed = items.filter { $0.isFailure }.count
             let durations = items.compactMap { $0.duration }
             let avg = durations.isEmpty ? 0 : durations.reduce(0, +) / Double(durations.count)
             let lastTime = items.map { $0.startTime }.max() ?? latest.startTime

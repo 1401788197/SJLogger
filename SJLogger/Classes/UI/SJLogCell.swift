@@ -17,6 +17,7 @@ class SJLogCell: UITableViewCell {
     private let statusSeparator = UILabel()
     private let durationLabel = UILabel()
     private let timeLabel = UILabel()
+    private let businessErrorLabel = UILabel()
     private let accessoryContainer = UIView()
     private let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
     private let checkmark = UIImageView()
@@ -75,7 +76,14 @@ class SJLogCell: UITableViewCell {
         metadataStack.alignment = .center
         metadataStack.spacing = 6
 
-        let labels = UIStackView(arrangedSubviews: [pathLabel, metadataStack])
+        businessErrorLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        businessErrorLabel.textColor = .systemRed
+        businessErrorLabel.numberOfLines = 2
+        businessErrorLabel.lineBreakMode = .byTruncatingTail
+        businessErrorLabel.accessibilityIdentifier = "logger.businessError"
+        businessErrorLabel.isHidden = true
+
+        let labels = UIStackView(arrangedSubviews: [pathLabel, metadataStack, businessErrorLabel])
         labels.axis = .vertical
         labels.alignment = .fill
         labels.spacing = 7
@@ -98,7 +106,9 @@ class SJLogCell: UITableViewCell {
 
             labels.leadingAnchor.constraint(equalTo: methodBadge.trailingAnchor, constant: 12),
             labels.trailingAnchor.constraint(equalTo: accessoryContainer.leadingAnchor, constant: -10),
-            labels.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 80),
+            labels.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            labels.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
 
             accessoryContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
             accessoryContainer.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
@@ -145,14 +155,14 @@ class SJLogCell: UITableViewCell {
         hostLabel.isHidden = !showsHost || log.host.isEmpty
         hostSeparator.isHidden = hostLabel.isHidden
 
-        if let statusCode = log.statusCode {
+        if log.error != nil {
+            statusLabel.text = "失败"
+            statusLabel.textColor = .systemRed
+        } else if let statusCode = log.statusCode {
             statusLabel.text = "\(statusCode)"
             statusLabel.textColor = SJTheme.color(forStatus: statusCode)
-        } else if log.error != nil {
-            statusLabel.text = "Error"
-            statusLabel.textColor = .systemRed
         } else {
-            statusLabel.text = "-"
+            statusLabel.text = log.endTime == nil ? "进行中" : "完成"
             statusLabel.textColor = .secondaryLabel
         }
 
@@ -169,6 +179,15 @@ class SJLogCell: UITableViewCell {
             durationLabel.font = .systemFont(ofSize: 12)
         }
 
+        let businessError = log.businessError
+        businessErrorLabel.isHidden = businessError == nil
+        businessErrorLabel.text = businessError.map {
+            "业务失败 · \($0.code) · \($0.message.isEmpty ? "服务端未提供错误说明" : $0.message)"
+        }
+        if businessError != nil, let statusCode = log.statusCode {
+            statusLabel.text = "HTTP \(statusCode)"
+        }
+
         timeLabel.text = Self.timeFormatter.string(from: log.startTime)
         chevron.isHidden = showCheckmark
         checkmark.isHidden = !showCheckmark
@@ -178,6 +197,7 @@ class SJLogCell: UITableViewCell {
             : .systemBackground
 
         let hostDescription = log.host.isEmpty ? "" : "，域名 \(log.host)"
-        accessibilityLabel = "\(badgeText)，\(pathLabel.text ?? "")\(hostDescription)，状态 \(statusLabel.text ?? "")，耗时 \(durationLabel.text ?? "")，\(timeLabel.text ?? "")"
+        let businessDescription = businessErrorLabel.text.map { "，\($0)" } ?? ""
+        accessibilityLabel = "\(badgeText)，\(pathLabel.text ?? "")\(hostDescription)，状态 \(statusLabel.text ?? "")，耗时 \(durationLabel.text ?? "")，\(timeLabel.text ?? "")\(businessDescription)"
     }
 }

@@ -29,7 +29,7 @@ SJLogger 是一个 iOS App 内网络日志调试工具，用于在 Debug/测试�
 - 自定义顶部导航栏，不受宿主 App 全局 `UINavigationBar` 样式影响。
 - 请求列表和接口分组两种视图。
 - 顶部统计：总数、成功率、平均耗时、总流量。
-- 快捷筛选：全部、成功、失败、HTTP、WebSocket。
+- 快捷筛选：全部、失败、慢请求；类型与状态码在高级筛选中选择。
 - 高级筛选：类型、方法、状态码段、慢请求、仅失败。
 - 动态/固定刷新模式，查看历史日志时新请求不会打断当前列表。
 - 详情页展示请求头、请求体、响应头、响应体、错误、耗时等信息。
@@ -61,13 +61,13 @@ SJLogger 是一个 iOS App 内网络日志调试工具，用于在 Debug/测试�
 推荐只在 Debug 配置中集成：
 
 ```ruby
-pod 'SJLogger', '~> 0.5.0', :configurations => ['Debug']
+pod 'SJLogger', '~> 0.6.0', :configurations => ['Debug']
 ```
 
 如果你希望所有配置都安装：
 
 ```ruby
-pod 'SJLogger', '~> 0.5.0'
+pod 'SJLogger', '~> 0.6.0'
 ```
 
 `pod 'SJLogger'` 默认只会安装 `SJLogger/Core`，不会引入 Starscream。
@@ -77,7 +77,7 @@ pod 'SJLogger', '~> 0.5.0'
 如果项目里使用 Starscream，并希望自动记录 WebSocket 连接、断开、接收消息、错误等事件：
 
 ```ruby
-pod 'SJLogger/Starscream', '~> 0.5.0', :configurations => ['Debug']
+pod 'SJLogger/Starscream', '~> 0.6.0', :configurations => ['Debug']
 ```
 
 这个子库会额外引入：
@@ -182,10 +182,13 @@ SJLogger.shared.exportLogs { text in
 
 界面里也可以直接导出：
 
-- 列表页点击导出按钮：导出当前日志。
-- 进入选择模式后点击导出：只导出选中的日志。
-- 详情页支持复制、分享、复制 cURL、导出 HAR。
-- 设置页支持查看和导出磁盘持久化日志。
+- 列表页「更多 → 导出当前结果」：将当前筛选结果作为 `.txt` 文件分享。
+- 进入选择模式后点击导出：只将选中的日志写入 `.txt` 文件。
+- 单条左滑分享、详情页分享：发送 `.txt` 文件附件；复制日志和复制 cURL 仍复制文本。
+- 详情页「导出 HAR 文件」：发送 `.har` 文件，可导入支持 HAR 的调试工具。
+- 设置页支持查看磁盘持久化日志，并导出为 `.txt` 文件附件。
+
+文件通过系统分享面板交给微信、邮件、「存储到文件」等接收应用，具体目标以设备已安装并支持该文件类型的应用为准。每次导出使用独立文件名；附件放在临时目录，分享完成或取消时保留供接收扩展读取，下次导出回收超过 7 天的旧附件。文件生成失败会显示错误提示。程序化 `exportLogs` 等原有文本 API 保持不变，新增 `SJLogExporter.exportFile(for:format:)` 返回文件 URL。
 
 ## 持久化日志
 
@@ -237,6 +240,34 @@ SJLogger.shared.start { config in
 }
 ```
 
+## App 业务结果与错误
+
+默认识别 HTTP/HTTPS 响应的顶层 `code` 和 `message`（兼容 `msg`）：`code == 0` 为业务成功，非 0 为业务失败。支持整数和整数字符串，兼容现有 `bodyDecryptor` 解密后的 JSON。例如 HTTP 200 返回：
+
+```json
+{"code": 4, "message": "库存不足", "data": null}
+```
+
+列表显示「业务失败 · 4 · 库存不足」，保留 HTTP 200；详情页优先展示业务码与说明。业务失败计入失败快捷筛选、接口聚合及统计，不再计入成功率。高级筛选可单独选择「业务失败」；HTTP 2xx 筛选仍表示原始 HTTP 状态，可与「仅失败」组合查找 HTTP 成功但业务失败的请求。文本与 HAR 导出保留业务结果，HAR 的 HTTP status 不变，额外信息位于 `_businessResult`。
+
+没有完整业务字段、无效 JSON、未记录/超过大小限制的响应体不会被猜测为业务失败；WebSocket 消息不使用此判断。旧持久化日志也按当前规则解析，若响应加密，查看前仍需设置对应解密器。
+
+其他 App 或第三方接口可定制规则、限定域名，或设为 `nil` 关闭：
+
+```swift
+SJLogger.shared.start { config in
+    config.businessResultParser = { log in
+        guard log.host == "api.example.com" else { return nil }
+        return SJBusinessResult.parseJSONEnvelope(log)
+        // 自定义协议可返回 SJBusinessResult(code: "E_STOCK", message: "库存不足", isSuccess: false)
+    }
+    // config.businessResultParser = nil
+}
+```
+
+解析闭包仅运行时有效，可能在主线程或存储队列调用，应保持线程安全、无副作用；不要在内部读取 `businessResult`、`businessError`、`isSuccess`、`isFailure`，以免递归。
+
+
 ## WebSocket 日志
 
 ### 手动记录
@@ -260,7 +291,7 @@ SJLogger.logWebSocketSent(url: "wss://example.com/socket", text: "client message
 安装：
 
 ```ruby
-pod 'SJLogger/Starscream', '~> 0.5.0'
+pod 'SJLogger/Starscream', '~> 0.6.0'
 ```
 
 接入方式是用 `SJStarscreamProxy` 包一层你原来的 `WebSocketDelegate`。原来的代理不会失效，因为 proxy 记录日志后会继续转发事件。
@@ -315,7 +346,7 @@ final class ChatSocketManager: NSObject, WebSocketDelegate {
 - 请求页：按请求/事件逐条展示。
 - 接口页：按 path 聚合接口，展示调用次数、成功率、平均耗时。
 - 搜索：支持 URL、方法、Header、请求体、响应体。
-- 快捷筛选：全部、成功、失败、HTTP、WebSocket。
+- 快捷筛选：全部、失败、慢请求；类型与状态码在高级筛选中选择。
 - 高级筛选：类型、方法、状态码段、慢请求、仅失败。
 - 详情页：查看 Header、Body、错误、耗时，支持复制/分享/导出。
 - 设置页：管理采集开关、悬浮球、刷新模式、慢请求阈值、持久化、清理。
@@ -384,7 +415,26 @@ SJLogger
 └── SJLogger.swift
 ```
 
+## 列表显示与刷新
+
+- 请求页和接口页共用同一份筛选结果，搜索 URL、方法、Header、请求体和响应体；取消搜索会同时恢复两页。
+- 状态栏显示「实时 / 已暂停 / 历史快照」及「显示条数 / 当前总条数」。没有匹配结果时会解释原因，并提供「重置筛选」。重新打开日志页不会继承上次搜索。
+- 两页都可下拉刷新，也可点击状态栏「刷新」。暂停模式保持当前顺序，已有请求的响应仍会更新；新请求按 ID 识别，即使已达到容量上限也会提示。空列表收到首条匹配请求时自动展示。
+- 「更多 → 选择日志」支持逐条选择、取消、全选和导出，状态栏显示已选数量。选择期间暂停数据变动，退出后恢复。
+- 详情页会跟随正在进行的请求更新，Body 支持文本选择和独立复制。持久化日志保持快照展示，不能通过左滑误删当前日志。
+- 高级筛选的「重置」只重置面板条件，点击「应用」后生效；「取消」放弃本次修改。
+
 ## 更新日志
+
+### 0.6.0（2026-11-12）
+
+- 列表、单条详情和持久化日志统一分享 TXT 文件附件，HAR 导出改为 HAR 文件；复制功能仍使用文本。
+- 新增 App 业务结果识别，HTTP 200 的业务错误在列表、详情、失败筛选、统计和导出中一致呈现。
+- 修复接口页搜索取消后仍显示空结果、暂停模式容量满后漏报新日志、空列表首条数据不展示的问题。
+- 统一请求/接口数据源、失败判定和筛选计数，增加请求完成后的详情更新。
+- 增加状态栏、筛选重置、两页下拉刷新、选择计数及全选；优化键盘避让、空状态和顶部按钮布局。
+- 更新示例工程至 Swift 5，补充界面与数据回归测试。
+
 
 ### 0.5.0
 

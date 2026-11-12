@@ -177,7 +177,7 @@ public class SJLoggerStorage {
                 return
             }
             
-            let filtered = self.logs.filter { !$0.isSuccess || $0.error != nil }.map { $0.snapshot() }
+            let filtered = self.logs.filter { $0.isFailure }.map { $0.snapshot() }
             DispatchQueue.main.async {
                 completion(filtered)
             }
@@ -322,7 +322,7 @@ public class SJLoggerStorage {
             
             let total = self.logs.count
             let success = self.logs.filter { $0.isSuccess }.count
-            let failed = total - success
+            let failed = self.logs.filter { $0.isFailure }.count
             let totalSize = self.logs.reduce(0) { $0 + $1.responseSize }
             
             var typeCount: [String: Int] = [:]

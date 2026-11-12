@@ -124,6 +124,11 @@ public class SJLoggerConfig {
     /// 请求/响应体展示用解密器。仅运行时生效，不持久化。
     public var bodyDecryptor: ((Data) -> String?)?
     
+    /// 解析 App 业务结果。默认识别顶层 code + message/msg，0 为成功。
+    /// 返回 nil 表示不适用；设置为 nil 可关闭业务判断。可按 log.host 限定业务域名。
+    /// 闭包可能在存储队列或主线程调用，应保持纯函数、线程安全，不调用 log.businessResult/isSuccess/isFailure。
+    public var businessResultParser: ((SJLoggerModel) -> SJBusinessResult?)? = SJBusinessResult.parseJSONEnvelope
+
     /// 列表默认刷新模式
     public var defaultRefreshMode: SJRefreshMode = .live {
         didSet { saveSettings() }

@@ -21,7 +21,7 @@ public class SJLogFilterViewController: UIViewController {
     private let stack = UIStackView()
     
     private let allTypes: [SJLogType] = [.http, .https, .websocket, .tcp, .udp]
-    private let allMethods: [SJHTTPMethod] = [.get, .post, .put, .delete, .patch]
+    private let allMethods: [SJHTTPMethod] = [.get, .post, .put, .delete, .patch, .head, .options, .trace, .connect]
     private let allBuckets: [SJStatusBucket] = SJStatusBucket.allCases
     
     private var typeButtons: [SJLogType: UIButton] = [:]
@@ -40,9 +40,12 @@ public class SJLogFilterViewController: UIViewController {
     
     public override func viewDidLoad() {
         super.viewDidLoad()
+        view.tintColor = SJLoggerConfig.shared.floatingWindowColor
         title = "高级筛选"
         view.backgroundColor = .systemGroupedBackground
-        customNavigationBar.setLeftButtons([resetButton])
+        let cancel = SJCustomNavigationBar.iconButton(systemName: "xmark", target: self, action: #selector(cancel))
+        cancel.accessibilityLabel = "取消筛选"
+        customNavigationBar.setLeftButtons([cancel, resetButton])
         customNavigationBar.setRightButtons([applyButton])
         setupLayout()
         buildSections()
@@ -164,19 +167,23 @@ public class SJLogFilterViewController: UIViewController {
     
     @objc private func reset() {
         let path = query.path
+        let keyword = query.keyword
         query = SJLogQuery()
         query.path = path
-        dismiss(animated: true) { [weak self] in
-            guard let self = self else { return }
-            self.onApply?(self.query)
-        }
+        query.keyword = keyword
+        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        typeButtons.removeAll()
+        methodButtons.removeAll()
+        bucketButtons.removeAll()
+        buildSections()
     }
     
+    @objc private func cancel() { dismiss(animated: true) }
+
     @objc private func apply() {
-        dismiss(animated: true) { [weak self] in
-            guard let self = self else { return }
-            self.onApply?(self.query)
-        }
+        let result = query
+        let callback = onApply
+        dismiss(animated: true) { callback?(result) }
     }
     
     // MARK: - 构建辅助
@@ -208,6 +215,7 @@ public class SJLogFilterViewController: UIViewController {
     }
     
     private func styleChip(_ btn: UIButton, selected: Bool) {
+        btn.accessibilityTraits = selected ? [.button, .selected] : [.button]
         if selected {
             btn.backgroundColor = SJLoggerConfig.shared.floatingWindowColor
             btn.configuration?.baseForegroundColor = .white

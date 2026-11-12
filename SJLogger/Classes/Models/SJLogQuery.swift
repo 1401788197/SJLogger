@@ -8,11 +8,14 @@ public enum SJStatusBucket: String, CaseIterable, Codable {
     case redirect = "3xx"
     case clientError = "4xx"
     case serverError = "5xx"
+    case businessError = "业务失败"
     case error = "Error"  // 无状态码但有错误
     
     /// 判断给定日志是否落在该段
     func matches(_ log: SJLoggerModel) -> Bool {
         switch self {
+        case .businessError:
+            return log.businessError != nil
         case .error:
             return log.statusCode == nil && log.error != nil
         default:
@@ -23,7 +26,7 @@ public enum SJStatusBucket: String, CaseIterable, Codable {
             case .redirect: return (300...399).contains(code)
             case .clientError: return (400...499).contains(code)
             case .serverError: return (500...599).contains(code)
-            case .error: return false
+            case .error, .businessError: return false
             }
         }
     }
@@ -97,7 +100,7 @@ public struct SJLogQuery {
             if !ok { return false }
         }
         // 仅失败
-        if onlyFailed, log.isSuccess, log.error == nil {
+        if onlyFailed, !log.isFailure {
             return false
         }
         // 慢请求
@@ -112,13 +115,19 @@ public struct SJLogQuery {
             return false
         }
         // 关键字
-        if !keyword.isEmpty {
-            let kw = keyword.lowercased()
+        let kw = keyword.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !kw.isEmpty {
             let hit = log.url.lowercased().contains(kw)
                 || (log.method?.rawValue.lowercased().contains(kw) ?? false)
                 || (log.requestBodyString?.lowercased().contains(kw) ?? false)
                 || (log.responseBodyString?.lowercased().contains(kw) ?? false)
-            if !hit { return false }
+            let headerHit = [log.requestHeaders, log.responseHeaders].contains { headers in
+                headers?.contains { $0.key.lowercased().contains(kw) || $0.value.lowercased().contains(kw) } ?? false
+            }
+            let businessHit = log.businessResult.map {
+                $0.code.lowercased().contains(kw) || $0.message.lowercased().contains(kw)
+            } ?? false
+            if !hit && !headerHit && !businessHit { return false }
         }
         return true
     }

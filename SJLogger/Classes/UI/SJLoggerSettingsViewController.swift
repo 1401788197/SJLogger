@@ -162,15 +162,7 @@ public class SJLoggerSettingsViewController: UIViewController {
                 return
             }
             
-            let activityVC = UIActivityViewController(activityItems: [text], applicationActivities: nil)
-            if let popover = activityVC.popoverPresentationController {
-                popover.sourceView = self.view
-                popover.sourceRect = CGRect(x: self.view.bounds.midX,
-                                            y: self.view.bounds.midY,
-                                            width: 1,
-                                            height: 1)
-            }
-            self.present(activityVC, animated: true)
+            SJLogFileSharing.present(contents: text, from: self, sourceView: self.view)
         }
     }
     

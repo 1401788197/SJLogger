@@ -15,6 +15,12 @@ public class SJEndpointListViewController: UIViewController {
         table.estimatedRowHeight = 92
         table.separatorStyle = .none
         table.backgroundColor = .systemGroupedBackground
+        table.accessibilityIdentifier = "logger.endpoints"
+        table.alwaysBounceVertical = true
+        table.keyboardDismissMode = .onDrag
+        let refresh = UIRefreshControl()
+        refresh.addTarget(self, action: #selector(refreshRequested), for: .valueChanged)
+        table.refreshControl = refresh
         table.contentInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
         return table
     }()
@@ -32,6 +38,11 @@ public class SJEndpointListViewController: UIViewController {
     
     // MARK: - 数据
     
+    var usesExternalData = false
+    var onRefresh: (() -> Void)?
+    var onResetFilters: (() -> Void)?
+    private var sourceLogs: [SJLoggerModel] = []
+    private let resetButton = UIButton(type: .system)
     private var groups: [SJEndpointGroup] = []
     private var filteredGroups: [SJEndpointGroup] = []
     private var keyword: String = ""
@@ -49,11 +60,11 @@ public class SJEndpointListViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         setupUI()
-        loadGroups()
-        NotificationCenter.default.addObserver(self,
+        if !usesExternalData { loadGroups() }
+        if !usesExternalData { NotificationCenter.default.addObserver(self,
                                                selector: #selector(loadGroups),
                                                name: SJLoggerStorage.logsDidUpdateNotification,
-                                               object: nil)
+                                               object: nil) }
     }
     
     deinit {
@@ -63,6 +74,11 @@ public class SJEndpointListViewController: UIViewController {
     private func setupUI() {
         view.addSubview(tableView)
         view.addSubview(emptyLabel)
+        resetButton.setTitle("重置筛选", for: .normal)
+        resetButton.addTarget(self, action: #selector(resetRequested), for: .touchUpInside)
+        resetButton.isHidden = true
+        resetButton.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(resetButton)
         tableView.translatesAutoresizingMaskIntoConstraints = false
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -71,6 +87,8 @@ public class SJEndpointListViewController: UIViewController {
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             
+            resetButton.topAnchor.constraint(equalTo: emptyLabel.bottomAnchor, constant: 16),
+            resetButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 40),
@@ -81,43 +99,66 @@ public class SJEndpointListViewController: UIViewController {
     // MARK: - 数据
     
     @objc private func loadGroups() {
+        guard !usesExternalData else { return }
         SJLoggerStorage.shared.getAllLogs { [weak self] logs in
             guard let self = self else { return }
-            let domainLogs = logs.filter { self.selectedHost == nil || $0.host == self.selectedHost }
-            self.groups = SJEndpointGroup.build(from: self.filterQuery.apply(to: domainLogs))
-            self.applyKeyword()
+            self.sourceLogs = logs
+            self.applyFilters()
+            self.endRefreshing()
         }
     }
-    
-    /// 外部设置搜索关键字（来自容器VC的搜索框）
+
+    @objc private func refreshRequested() {
+        if usesExternalData { onRefresh?() } else { loadGroups() }
+    }
+
+    @objc private func resetRequested() {
+        if usesExternalData { onResetFilters?() }
+        else {
+            keyword = ""
+            selectedHost = nil
+            filterQuery = SJLogQuery()
+            applyFilters()
+        }
+    }
+
+    func endRefreshing() { tableView.refreshControl?.endRefreshing() }
+
+    /// The container supplies the exact published request snapshot, including search and pause state.
+    func display(logs: [SJLoggerModel], hasActiveFilters: Bool, totalCount: Int) {
+        groups = SJEndpointGroup.build(from: logs)
+        filteredGroups = groups
+        emptyLabel.text = hasActiveFilters
+            ? "没有匹配的接口\n已有 \(totalCount) 条日志，试试重置筛选"
+            : "暂无接口\n发起网络请求后，接口将自动聚合显示"
+        emptyLabel.isHidden = !groups.isEmpty
+        resetButton.isHidden = !groups.isEmpty || !hasActiveFilters
+        tableView.reloadData()
+    }
+
     public func setKeyword(_ text: String) {
         keyword = text
-        applyKeyword()
+        if isViewLoaded { applyFilters() }
     }
 
     public func setHost(_ host: String?) {
-        guard selectedHost != host else { return }
         selectedHost = host
-        if isViewLoaded { loadGroups() }
+        if isViewLoaded { applyFilters() }
     }
 
     public func setFilterQuery(_ query: SJLogQuery) {
         filterQuery = query
-        if isViewLoaded { loadGroups() }
+        if isViewLoaded { applyFilters() }
     }
-    
-    private func applyKeyword() {
-        if keyword.isEmpty {
-            filteredGroups = groups
-        } else {
-            let kw = keyword.lowercased()
-            filteredGroups = groups.filter {
-                $0.path.lowercased().contains(kw) || $0.host.lowercased().contains(kw)
-            }
-        }
-        emptyLabel.isHidden = !filteredGroups.isEmpty
-        tableView.reloadData()
+
+    private func applyFilters() {
+        guard !usesExternalData else { return }
+        var query = filterQuery
+        query.keyword = keyword
+        let logs = query.apply(to: sourceLogs.filter { selectedHost == nil || $0.host == selectedHost })
+        display(logs: logs, hasActiveFilters: !query.isEmpty || selectedHost != nil, totalCount: sourceLogs.count)
     }
+
 }
 
 // MARK: - DataSource / Delegate
@@ -141,7 +182,7 @@ extension SJEndpointListViewController: UITableViewDataSource, UITableViewDelega
         } else if let onSelectPath = onSelectPath {
             onSelectPath(group.path)
         } else {
-            let vc = SJLogListViewController(fixedPath: group.path)
+            let vc = SJLogListViewController(fixedPath: group.path, host: group.host)
             navigationController?.pushViewController(vc, animated: true)
         }
     }

@@ -8,7 +8,7 @@ class SJCustomNavigationBar: UIView {
     private let titleLabel = UILabel()
     private let centerContainer = UIView()
     private var customCenterView: UIView?
-    private static let iconButtonSize = CGSize(width: 30, height: 38)
+    private static let iconButtonSize = CGSize(width: 32, height: 44)
     private static let iconPointSize: CGFloat = 18
     
     init(title: String) {
@@ -128,7 +128,11 @@ class SJCustomNavigationBar: UIView {
         }
         centerContainer.isHidden = true
         
+        let availableCenter = UILayoutGuide()
+        addLayoutGuide(availableCenter)
         NSLayoutConstraint.activate([
+            availableCenter.leadingAnchor.constraint(equalTo: leftStack.trailingAnchor, constant: 8),
+            availableCenter.trailingAnchor.constraint(equalTo: rightStack.leadingAnchor, constant: -8),
             heightAnchor.constraint(equalToConstant: 52),
             
             leftStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
@@ -142,7 +146,7 @@ class SJCustomNavigationBar: UIView {
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leftStack.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: rightStack.leadingAnchor, constant: -8),
 
-            centerContainer.centerXAnchor.constraint(equalTo: centerXAnchor),
+            centerContainer.centerXAnchor.constraint(equalTo: availableCenter.centerXAnchor),
             centerContainer.centerYAnchor.constraint(equalTo: centerYAnchor),
             centerContainer.leadingAnchor.constraint(greaterThanOrEqualTo: leftStack.trailingAnchor, constant: 8),
             centerContainer.trailingAnchor.constraint(lessThanOrEqualTo: rightStack.leadingAnchor, constant: -8),
@@ -328,9 +332,7 @@ class SJStatsBar: UIView {
     func update(with logs: [SJLoggerModel]) {
         let total = logs.count
         let success = logs.filter { $0.isSuccess }.count
-        let failed = logs.filter {
-            $0.error != nil || (($0.statusCode ?? 0) >= 400)
-        }.count
+        let failed = logs.filter { $0.isFailure }.count
         let rate = total > 0 ? Int((Double(success) / Double(total) * 100).rounded()) : 0
         let durations = logs.compactMap { $0.duration }
         let average = durations.isEmpty ? 0 : Int(durations.reduce(0, +) / Double(durations.count))
@@ -372,7 +374,7 @@ class SJCompactFilterBar: UIView {
 
         stack.axis = .horizontal
         stack.alignment = .center
-        stack.spacing = 8
+        stack.spacing = 6
 
         configureDomainButton()
         stack.addArrangedSubview(domainButton)
@@ -396,7 +398,7 @@ class SJCompactFilterBar: UIView {
             stack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 12),
             stack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -12),
             stack.heightAnchor.constraint(equalToConstant: 34),
-            domainButton.widthAnchor.constraint(lessThanOrEqualToConstant: 230)
+            domainButton.widthAnchor.constraint(lessThanOrEqualToConstant: 140)
         ])
         updateStyles()
     }
@@ -427,7 +429,12 @@ class SJCompactFilterBar: UIView {
     private func configureDomainButton() {
         var configuration = UIButton.Configuration.plain()
         configuration.image = UIImage(systemName: "globe")
-        configuration.imagePadding = 6
+        configuration.imagePadding = 4
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var result = attributes
+            result.font = .systemFont(ofSize: 13, weight: .medium)
+            return result
+        }
         configuration.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10)
         configuration.baseForegroundColor = .label
         domainButton.configuration = configuration
@@ -443,7 +450,12 @@ class SJCompactFilterBar: UIView {
         let button = UIButton(type: .system)
         var configuration = UIButton.Configuration.plain()
         configuration.title = title
-        configuration.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12)
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var result = attributes
+            result.font = .systemFont(ofSize: 13, weight: .medium)
+            return result
+        }
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
         button.configuration = configuration
         button.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
         button.tag = index
@@ -469,5 +481,45 @@ class SJCompactFilterBar: UIView {
                 button.configuration?.baseForegroundColor = .label
             }
         }
+    }
+}
+
+// MARK: - 文件附件分享
+/// 分享入口统一传入文件 URL，避免系统将日志当作长文本发送。
+enum SJLogFileSharing {
+    static func present(contents: String, format: SJLogExporter.FileFormat = .text,
+                        from presenter: UIViewController, sourceView: UIView,
+                        onPresented: (() -> Void)? = nil) {
+        guard presenter.presentedViewController == nil else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let result = Result { try SJLogExporter.writeFile(contents: contents, format: format) }
+            DispatchQueue.main.async { [weak presenter, weak sourceView] in
+                guard let presenter = presenter, let sourceView = sourceView,
+                      presenter.viewIfLoaded?.window != nil, presenter.presentedViewController == nil else { return }
+                switch result {
+                case .success(let url):
+                    let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                    activity.popoverPresentationController?.sourceView = sourceView
+                    activity.popoverPresentationController?.sourceRect = sourceView.bounds
+                    activity.completionWithItemsHandler = { [weak presenter] _, _, _, error in
+                        guard let presenter = presenter, let error = error else { return }
+                        // 等待分享面板退出后再显示失败原因。
+                        DispatchQueue.main.async {
+                            showError(error, from: presenter)
+                        }
+                    }
+                    presenter.present(activity, animated: true, completion: onPresented)
+                case .failure(let error):
+                    showError(error, from: presenter)
+                }
+            }
+        }
+    }
+
+    private static func showError(_ error: Error, from presenter: UIViewController) {
+        guard presenter.presentedViewController == nil else { return }
+        let alert = UIAlertController(title: "导出文件失败", message: error.localizedDescription, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "确定", style: .default))
+        presenter.present(alert, animated: true)
     }
 }

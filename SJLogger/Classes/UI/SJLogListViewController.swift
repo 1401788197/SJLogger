@@ -15,9 +15,14 @@ public class SJLogListViewController: UIViewController {
         table.delegate = self
         table.dataSource = self
         table.register(SJLogCell.self, forCellReuseIdentifier: "SJLogCell")
-        table.rowHeight = 80
+        table.rowHeight = UITableView.automaticDimension
+        table.estimatedRowHeight = 80
         table.separatorStyle = .none
-        table.backgroundColor = .systemBackground
+        table.backgroundColor = .systemGroupedBackground
+        table.keyboardDismissMode = .onDrag
+        table.alwaysBounceVertical = true
+        table.accessibilityIdentifier = "logger.requests"
+        table.refreshControl = refreshControl
         table.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 8, right: 0)
         return table
     }()
@@ -25,7 +30,7 @@ public class SJLogListViewController: UIViewController {
     private lazy var searchBar: UISearchBar = {
         let search = UISearchBar()
         search.delegate = self
-        search.placeholder = "搜索URL、方法、内容..."
+        search.placeholder = "搜索 URL、方法、Header、内容"
         search.searchBarStyle = .minimal
         search.backgroundImage = UIImage()
         search.setShowsCancelButton(true, animated: false)
@@ -33,6 +38,40 @@ public class SJLogListViewController: UIViewController {
     }()
 
     private let secondaryToolbar = UIView()
+    private let statusToolbar = UIStackView()
+    private let statusLabel = UILabel()
+    private lazy var refreshControl: UIRefreshControl = {
+        let control = UIRefreshControl()
+        control.addTarget(self, action: #selector(refreshNow), for: .valueChanged)
+        return control
+    }()
+    private lazy var refreshButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("刷新", for: .normal)
+        button.addTarget(self, action: #selector(refreshNow), for: .touchUpInside)
+        return button
+    }()
+    private lazy var resetFiltersButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("重置筛选", for: .normal)
+        button.accessibilityIdentifier = "logger.resetFilters"
+        button.addTarget(self, action: #selector(resetFilters), for: .touchUpInside)
+        return button
+    }()
+    private lazy var emptyState: UIStackView = {
+        let stack = UIStackView(arrangedSubviews: [emptyLabel, emptyActionButton])
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 16
+        stack.isHidden = true
+        return stack
+    }()
+    private lazy var emptyActionButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.configuration = .tinted()
+        button.addTarget(self, action: #selector(emptyAction), for: .touchUpInside)
+        return button
+    }()
     
     private lazy var statsBar: SJStatsBar = {
         return SJStatsBar()
@@ -99,21 +138,23 @@ public class SJLogListViewController: UIViewController {
     
     private lazy var emptyLabel: UILabel = {
         let label = UILabel()
-        label.text = "📭\n\n暂无日志\n开始使用应用后，网络请求将显示在这里"
+        label.text = "正在加载日志…"
         label.textAlignment = .center
         label.textColor = .secondaryLabel
         label.numberOfLines = 0
         label.font = .systemFont(ofSize: 15)
-        label.isHidden = true
+        label.isHidden = false
         return label
     }()
     
     /// 接口分组子控制器（仅在「接口」分段显示）
     private lazy var endpointsVC: SJEndpointListViewController = {
         let vc = SJEndpointListViewController()
+        vc.usesExternalData = true
+        vc.onRefresh = { [weak self] in self?.refreshNow() }
+        vc.onResetFilters = { [weak self] in self?.resetFilters() }
         vc.onSelectEndpoint = { [weak self] path, host in
-            let detail = SJLogListViewController(fixedPath: path)
-            detail.selectedHost = host.isEmpty ? self?.selectedHost : host
+            let detail = SJLogListViewController(fixedPath: path, host: host.isEmpty ? self?.selectedHost : host)
             self?.navigationController?.pushViewController(detail, animated: true)
         }
         return vc
@@ -128,6 +169,12 @@ public class SJLogListViewController: UIViewController {
     
     private var allLogs: [SJLoggerModel] = []
     private var filteredLogs: [SJLoggerModel] = []
+    /// 两页、统计和导出共用的已展示快照。
+    private var displayedLogs: [SJLoggerModel] = []
+    private var hasLoadedLogs = false
+    private var reloadGeneration = 0
+    private var shouldRevealPending = false
+    private var scheduledReload: DispatchWorkItem?
     
     /// 高级筛选条件
     private var query = SJLogQuery()
@@ -140,10 +187,7 @@ public class SJLogListViewController: UIViewController {
     private var refreshMode: SJRefreshMode = SJLoggerConfig.shared.defaultRefreshMode
     /// 固定模式下暂存的新日志数量
     private var pendingCount = 0
-    
-    // 记住筛选条件
-    private static var savedSearchText: String = ""
-    
+
     // 多选模式
     private var isSelectionMode = false
     private var selectedLogs: Set<String> = [] // 存储选中的log ID
@@ -162,7 +206,8 @@ public class SJLogListViewController: UIViewController {
     // MARK: - 初始化
     
     /// - Parameter fixedPath: 若指定，则只展示该接口路径下的请求（隐藏分段控件）
-    public init(fixedPath: String? = nil) {
+    public init(fixedPath: String? = nil, host: String? = nil) {
+        self.selectedHost = host
         self.fixedPath = fixedPath
         self.snapshotLogs = nil
         self.titleOverride = nil
@@ -196,12 +241,14 @@ public class SJLogListViewController: UIViewController {
     
     public override func viewDidLoad() {
         super.viewDidLoad()
+        view.tintColor = SJLoggerConfig.shared.floatingWindowColor
         setupUI()
-        restoreFilterState()
-        loadLogs()
         if !isSnapshotMode {
             observeLogUpdates()
+            NotificationCenter.default.addObserver(self, selector: #selector(logsDidUpdate),
+                                                   name: UIApplication.didBecomeActiveNotification, object: nil)
         }
+        loadLogs()
     }
     
     public override func viewWillAppear(_ animated: Bool) {
@@ -209,6 +256,7 @@ public class SJLogListViewController: UIViewController {
         navigationController?.setNavigationBarHidden(true, animated: false)
         configureCustomNavigationBar()
         updateContentInsets()
+        if hasLoadedLogs && !isSnapshotMode { loadLogs() }
     }
     
     public override func viewDidLayoutSubviews() {
@@ -218,6 +266,7 @@ public class SJLogListViewController: UIViewController {
     }
     
     deinit {
+        scheduledReload?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
     
@@ -238,10 +287,29 @@ public class SJLogListViewController: UIViewController {
         view.addSubview(customNavigationBar)
         view.addSubview(secondaryToolbar)
         view.addSubview(tableView)
-        view.addSubview(emptyLabel)
+        statusToolbar.axis = .horizontal
+        statusToolbar.alignment = .center
+        statusToolbar.spacing = 10
+        statusToolbar.isLayoutMarginsRelativeArrangement = true
+        statusToolbar.layoutMargins = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 12)
+        statusToolbar.backgroundColor = .secondarySystemGroupedBackground
+        statusLabel.text = "正在加载日志…"
+        statusLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        statusLabel.textColor = .secondaryLabel
+        statusLabel.adjustsFontSizeToFitWidth = true
+        statusLabel.minimumScaleFactor = 0.8
+        statusLabel.accessibilityIdentifier = "logger.status"
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        [statusLabel, resetFiltersButton, refreshButton].forEach { statusToolbar.addArrangedSubview($0) }
+        [resetFiltersButton, refreshButton].forEach {
+            $0.titleLabel?.font = .systemFont(ofSize: 12, weight: .semibold)
+            $0.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        view.addSubview(statusToolbar)
+        view.addSubview(emptyState)
         view.addSubview(newLogsBanner)
 
-        [customNavigationBar, secondaryToolbar, compactFilterBar, searchBar, tableView, emptyLabel, newLogsBanner].forEach {
+        [customNavigationBar, secondaryToolbar, compactFilterBar, searchBar, tableView, statusToolbar, emptyState, newLogsBanner].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
         }
 
@@ -268,15 +336,20 @@ public class SJLogListViewController: UIViewController {
             searchBar.trailingAnchor.constraint(equalTo: secondaryToolbar.safeAreaLayoutGuide.trailingAnchor),
             searchBar.bottomAnchor.constraint(equalTo: secondaryToolbar.bottomAnchor),
 
-            tableView.topAnchor.constraint(equalTo: secondaryToolbar.bottomAnchor),
+            statusToolbar.topAnchor.constraint(equalTo: secondaryToolbar.bottomAnchor),
+            statusToolbar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            statusToolbar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            statusToolbar.heightAnchor.constraint(equalToConstant: 40),
+
+            tableView.topAnchor.constraint(equalTo: statusToolbar.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
 
-            emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
-            emptyLabel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 40),
-            emptyLabel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -40),
+            emptyState.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            emptyState.centerYAnchor.constraint(equalTo: tableView.centerYAnchor),
+            emptyState.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 40),
+            emptyState.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -40),
 
             newLogsBanner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             newLogsBanner.topAnchor.constraint(equalTo: tableView.topAnchor, constant: 8),
@@ -299,7 +372,7 @@ public class SJLogListViewController: UIViewController {
         let showsSegments = fixedPath == nil && !isSnapshotMode
         customNavigationBar.setCenterView(showsSegments ? segmentedControl : nil)
         customNavigationBar.setTitle(showsSegments ? "" : listTitle)
-        let isPushed = navigationController?.viewControllers.first !== self
+        let isPushed = navigationController.map { $0.viewControllers.first !== self } ?? false
         let closeButton = SJCustomNavigationBar.iconButton(systemName: isPushed ? "chevron.left" : "xmark",
                                                            target: self,
                                                            action: isPushed ? #selector(backAction) : #selector(closeAction))
@@ -310,58 +383,67 @@ public class SJLogListViewController: UIViewController {
     
     // MARK: - 数据加载
     
-    private func loadLogs() {
+    private func loadLogs(revealPending: Bool = false) {
+        guard !isSelectionMode else { return }
+        shouldRevealPending = shouldRevealPending || revealPending
         if let snapshotLogs = snapshotLogs {
             allLogs = snapshotLogs
+            displayedLogs = snapshotLogs
+            hasLoadedLogs = true
             updateDomainMenu()
             applyQuery(reload: true)
+            refreshControl.endRefreshing()
             return
         }
-        
+        reloadGeneration += 1
+        let generation = reloadGeneration
         SJLoggerStorage.shared.getAllLogs { [weak self] logs in
-            guard let self = self else { return }
+            guard let self = self, generation == self.reloadGeneration else { return }
             self.allLogs = logs
+            if self.shouldRevealPending || !self.hasLoadedLogs || self.refreshMode == .live || self.filteredLogs.isEmpty {
+                self.displayedLogs = logs
+            } else {
+                // 保持顺序，同时更新响应并移除已删除的记录。
+                let latest = Dictionary(logs.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+                self.displayedLogs = self.displayedLogs.compactMap { latest[$0.id] }
+                if self.scopedLogs(from: self.displayedLogs).isEmpty { self.displayedLogs = logs }
+            }
+            self.shouldRevealPending = false
+            self.hasLoadedLogs = true
             self.updateDomainMenu()
             self.applyQuery(reload: true)
+            self.refreshControl.endRefreshing()
+            self.endpointsVC.endRefreshing()
         }
     }
-    
+
     private func observeLogUpdates() {
-        NotificationCenter.default.addObserver(self,
-                                              selector: #selector(logsDidUpdate),
-                                              name: SJLoggerStorage.logsDidUpdateNotification,
-                                              object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(logsDidUpdate),
+                                               name: SJLoggerStorage.logsDidUpdateNotification, object: nil)
     }
-    
+
     @objc private func logsDidUpdate() {
-        // 固定模式：不打断当前查看，只累计提示
-        if refreshMode == .frozen && !isSelectionMode {
-            SJLoggerStorage.shared.getAllLogs { [weak self] logs in
-                guard let self = self else { return }
-                let previousCount = self.scopedLogs(from: self.allLogs).count
-                let newCount = max(0, self.scopedLogs(from: logs).count - previousCount)
-                self.allLogs = logs
-                self.updateDomainMenu()
-                if newCount > 0 {
-                    self.pendingCount += newCount
-                    self.updateNewLogsBanner()
-                }
-            }
-            return
+        guard !isSnapshotMode, !isSelectionMode, scheduledReload == nil else { return }
+        // 合并密集通知，持续流量下也每 0.1 秒最多刷新一次。
+        let work = DispatchWorkItem { [weak self] in
+            self?.scheduledReload = nil
+            self?.loadLogs()
         }
-        // 动态模式：实时刷新
-        loadLogs()
+        scheduledReload = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
     }
-    
-    /// 合并当前query+快捷分类，刷新展示
+
     private func applyQuery(reload: Bool) {
-        filteredLogs = scopedLogs(from: allLogs)
-        pendingCount = 0
+        filteredLogs = scopedLogs(from: displayedLogs)
+        let displayedIDs = Set(displayedLogs.map(\.id))
+        pendingCount = scopedLogs(from: allLogs).filter { !displayedIDs.contains($0.id) }.count
+        selectedLogs.formIntersection(Set(filteredLogs.map(\.id)))
         updateNewLogsBanner()
         updateStats()
         updateQuickFilterCounts()
         updateFilterBadge()
         updateEndpointFiltersIfNeeded()
+        updateActionMenu()
         if reload { updateUI() }
     }
 
@@ -380,16 +462,6 @@ public class SJLogListViewController: UIViewController {
         return effectiveQuery.apply(to: domainLogs)
     }
     
-    // MARK: - 状态恢复
-    
-    private func restoreFilterState() {
-        if fixedPath == nil, !isSnapshotMode, !Self.savedSearchText.isEmpty {
-            searchBar.text = Self.savedSearchText
-            query.keyword = Self.savedSearchText
-            setSearchVisible(true, animated: false, focus: false)
-        }
-    }
-    
     // MARK: - 统计 / 提示条 / 操作状态
     
     private func updateStats() {
@@ -398,7 +470,7 @@ public class SJLogListViewController: UIViewController {
     }
     
     private func updateNewLogsBanner() {
-        if pendingCount > 0 && refreshMode == .frozen {
+        if pendingCount > 0 && refreshMode == .frozen && !isSelectionMode {
             newLogsBanner.isHidden = false
             newLogsBanner.setTitle("  ↑ \(pendingCount) 条新请求  ", for: .normal)
         } else {
@@ -414,10 +486,8 @@ public class SJLogListViewController: UIViewController {
     }
 
     private func updateQuickFilterCounts() {
-        let domainLogs = allLogs.filter { selectedHost == nil || $0.host == selectedHost }
-        let failed = domainLogs.filter {
-            $0.error != nil || (($0.statusCode ?? 0) >= 400)
-        }.count
+        let domainLogs = query.apply(to: displayedLogs.filter { selectedHost == nil || $0.host == selectedHost })
+        let failed = domainLogs.filter { $0.isFailure }.count
         let slow = domainLogs.filter {
             ($0.duration ?? 0) >= SJLoggerConfig.shared.slowRequestThresholdMs
         }.count
@@ -436,10 +506,6 @@ public class SJLogListViewController: UIViewController {
             let lhsCount = counts[$0, default: 0]
             let rhsCount = counts[$1, default: 0]
             return lhsCount == rhsCount ? $0.localizedCaseInsensitiveCompare($1) == .orderedAscending : lhsCount > rhsCount
-        }
-
-        if !allLogs.isEmpty, let selectedHost = selectedHost, !hosts.contains(selectedHost) {
-            self.selectedHost = nil
         }
 
         var actions: [UIMenuElement] = [
@@ -471,12 +537,45 @@ public class SJLogListViewController: UIViewController {
     }
 
     private func updateEndpointFiltersIfNeeded() {
-        guard segmentedControl.selectedSegmentIndex == 1, endpointsVC.parent === self else { return }
-        endpointsVC.setHost(selectedHost)
-        var endpointQuery = effectiveQuery
-        endpointQuery.keyword = ""
-        endpointQuery.path = nil
-        endpointsVC.setFilterQuery(endpointQuery)
+        guard endpointsVC.parent === self else { return }
+        endpointsVC.display(logs: filteredLogs, hasActiveFilters: hasActiveFilters,
+                            totalCount: allLogs.count)
+    }
+
+    private var hasActiveFilters: Bool {
+        return !query.keyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || query.hasAdvancedFilter || quickFilter != .all || (selectedHost != nil && fixedPath == nil)
+    }
+
+    @objc private func resetFilters() {
+        query = SJLogQuery()
+        query.path = fixedPath
+        quickFilter = .all
+        if fixedPath == nil { selectedHost = nil }
+        searchBar.text = ""
+        searchBar.resignFirstResponder()
+        setSearchVisible(false, animated: false, focus: false)
+        setSecondaryToolbarCollapsed(false, animated: false)
+        displayedLogs = allLogs
+        updateDomainMenu()
+        applyQuery(reload: true)
+        tableView.setContentOffset(CGPoint(x: 0, y: -tableView.adjustedContentInset.top), animated: false)
+    }
+
+    @objc private func refreshNow() {
+        guard !isSelectionMode else {
+            refreshControl.endRefreshing()
+            endpointsVC.endRefreshing()
+            return
+        }
+        scheduledReload?.cancel()
+        scheduledReload = nil
+        loadLogs(revealPending: true)
+    }
+
+    @objc private func emptyAction() {
+        if hasActiveFilters { resetFilters() }
+        else if !isSnapshotMode { showSettings() }
     }
 
     private func setStatsHeaderHeight(_ height: CGFloat) {
@@ -504,13 +603,23 @@ public class SJLogListViewController: UIViewController {
                 self?.toggleRefreshMode()
             })
         }
-        if fixedPath == nil && !isSnapshotMode {
+        if fixedPath == nil && !isSnapshotMode && segmentedControl.selectedSegmentIndex == 0 {
             primaryActions.append(UIAction(title: isSelectionMode ? "取消选择" : "选择日志",
                                            image: UIImage(systemName: isSelectionMode ? "xmark.circle" : "checkmark.circle")) { [weak self] _ in
                 self?.toggleSelectionMode()
             })
         }
-        primaryActions.append(UIAction(title: isSelectionMode ? "导出已选日志" : "导出当前结果",
+        if isSelectionMode {
+            let allSelected = !filteredLogs.isEmpty && selectedLogs.count == filteredLogs.count
+            primaryActions.append(UIAction(title: allSelected ? "取消全选" : "全选当前结果",
+                                           image: UIImage(systemName: "checkmark.circle")) { [weak self] _ in
+                guard let self = self else { return }
+                self.selectedLogs = allSelected ? [] : Set(self.filteredLogs.map(\.id))
+                self.updateUI()
+                self.updateActionMenu()
+            })
+        }
+        primaryActions.append(UIAction(title: isSelectionMode ? "导出已选日志 (\(selectedLogs.count))" : "导出当前结果",
                                        image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in
             self?.exportLogs()
         })
@@ -550,7 +659,6 @@ public class SJLogListViewController: UIViewController {
     private func clearSearchAndHide() {
         searchBar.text = ""
         searchBar.resignFirstResponder()
-        Self.savedSearchText = ""
         query.keyword = ""
         setSearchVisible(false, animated: true, focus: false)
         applyQuery(reload: true)
@@ -581,7 +689,7 @@ public class SJLogListViewController: UIViewController {
     }
 
     private func setSecondaryToolbarCollapsed(_ collapsed: Bool, animated: Bool) {
-        guard !isSearchVisible || !collapsed, isSecondaryToolbarCollapsed != collapsed else { return }
+        guard (!isSearchVisible && !hasActiveFilters) || !collapsed, isSecondaryToolbarCollapsed != collapsed else { return }
         isSecondaryToolbarCollapsed = collapsed
         secondaryToolbarHeightConstraint?.constant = collapsed ? 0 : 40
         let changes = {
@@ -596,20 +704,18 @@ public class SJLogListViewController: UIViewController {
     }
     
     @objc private func applyPendingLogs() {
-        pendingCount = 0
-        updateNewLogsBanner()
+        displayedLogs = allLogs
         applyQuery(reload: true)
-        if !filteredLogs.isEmpty {
-            tableView.scrollToRow(at: IndexPath(row: 0, section: 0), at: .top, animated: true)
-        }
+        tableView.setContentOffset(CGPoint(x: 0, y: -tableView.adjustedContentInset.top), animated: true)
+        refreshNow()
     }
-    
+
     @objc private func toggleRefreshMode() {
+        guard !isSelectionMode else { return }
         refreshMode = (refreshMode == .live) ? .frozen : .live
         updateActionMenu()
-        if refreshMode == .live {
-            applyPendingLogs()
-        }
+        if refreshMode == .live { applyPendingLogs() }
+        updateUI()
         let msg = refreshMode == .live ? "动态模式：新请求实时显示" : "固定模式：新请求暂存，不打断查看"
         showToast(msg)
     }
@@ -617,28 +723,28 @@ public class SJLogListViewController: UIViewController {
     @objc private func segmentChanged() {
         let showEndpoints = segmentedControl.selectedSegmentIndex == 1
         if showEndpoints {
+            if isSelectionMode { toggleSelectionMode() }
+            guard endpointsVC.parent == nil else { return }
             addChild(endpointsVC)
             endpointsVC.view.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(endpointsVC.view)
             NSLayoutConstraint.activate([
-                endpointsVC.view.topAnchor.constraint(equalTo: secondaryToolbar.bottomAnchor),
+                endpointsVC.view.topAnchor.constraint(equalTo: statusToolbar.bottomAnchor),
                 endpointsVC.view.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
                 endpointsVC.view.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
-                endpointsVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+                endpointsVC.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
             ])
             endpointsVC.didMove(toParent: self)
-            endpointsVC.setKeyword(searchBar.text ?? "")
-            endpointsVC.setHost(selectedHost)
-            var endpointQuery = effectiveQuery
-            endpointQuery.keyword = ""
-            endpointQuery.path = nil
-            endpointsVC.setFilterQuery(endpointQuery)
+            updateEndpointFiltersIfNeeded()
             view.bringSubviewToFront(newLogsBanner)
         } else {
             endpointsVC.willMove(toParent: nil)
             endpointsVC.view.removeFromSuperview()
             endpointsVC.removeFromParent()
         }
+        tableView.isHidden = showEndpoints
+        updateUI()
+        updateActionMenu()
     }
     
     @objc private func showSettings() {
@@ -686,8 +792,36 @@ public class SJLogListViewController: UIViewController {
     }
     
     private func updateUI() {
-        emptyLabel.isHidden = !filteredLogs.isEmpty
+        let endpointMode = segmentedControl.selectedSegmentIndex == 1
+        emptyState.isHidden = !filteredLogs.isEmpty || endpointMode || !hasLoadedLogs
+        emptyLabel.text = hasActiveFilters
+            ? "没有匹配的请求\n已有 \(allLogs.count) 条日志，试试重置筛选"
+            : (isSnapshotMode ? "没有持久化日志" : "暂无当前日志\n发起网络请求后自动显示\n历史日志可在设置中查看")
+        emptyActionButton.setTitle(hasActiveFilters ? "重置筛选" : "查看设置与历史日志", for: .normal)
+        emptyActionButton.isHidden = isSnapshotMode && !hasActiveFilters
+        let mode = isSnapshotMode ? "历史快照" : (refreshMode == .live ? "实时" : "已暂停")
+        statusLabel.text = !hasLoadedLogs ? "正在加载日志…" : (isSelectionMode
+            ? "已选 \(selectedLogs.count) / \(filteredLogs.count) 条"
+            : "\(mode) · 显示 \(filteredLogs.count) / \(allLogs.count) 条")
+        statusLabel.textColor = !isSnapshotMode && refreshMode == .frozen ? .systemOrange : .secondaryLabel
+        resetFiltersButton.isHidden = !hasActiveFilters
+        resetFiltersButton.isEnabled = !isSelectionMode
+        searchBar.isUserInteractionEnabled = !isSelectionMode
+        updateNewLogsBanner()
+        refreshButton.isHidden = isSnapshotMode || isSelectionMode
+        segmentedControl.isEnabled = !isSelectionMode
+        filterButton.isEnabled = !isSelectionMode
+        searchButton.isEnabled = !isSelectionMode
+        compactFilterBar.isUserInteractionEnabled = !isSelectionMode
+        if hasActiveFilters { setSecondaryToolbarCollapsed(false, animated: false) }
         tableView.reloadData()
+        // 筛选或删除后修正越界偏移，避免列表有数据但可视区为空。
+        tableView.layoutIfNeeded()
+        let maxY = max(-tableView.adjustedContentInset.top,
+                       tableView.contentSize.height - tableView.bounds.height + tableView.adjustedContentInset.bottom)
+        if tableView.contentOffset.y > maxY {
+            tableView.setContentOffset(CGPoint(x: 0, y: maxY), animated: false)
+        }
     }
     
     // MARK: - Actions
@@ -708,6 +842,8 @@ public class SJLogListViewController: UIViewController {
             // 固定路径模式下强制保留path
             if let fp = self.fixedPath { q.path = fp }
             self.query = q
+            self.searchBar.text = q.keyword
+            self.displayedLogs = self.allLogs
             self.applyQuery(reload: true)
         }
         let nav = UINavigationController(rootViewController: vc)
@@ -733,7 +869,11 @@ public class SJLogListViewController: UIViewController {
         selectedLogs.removeAll()
         
         if isSelectionMode {
-            tableView.allowsMultipleSelection = true
+            searchBar.resignFirstResponder()
+            scheduledReload?.cancel()
+            scheduledReload = nil
+            reloadGeneration += 1
+            tableView.allowsMultipleSelection = false
             // 进入编辑模式，停止监听日志更新
             NotificationCenter.default.removeObserver(self, name: SJLoggerStorage.logsDidUpdateNotification, object: nil)
         } else {
@@ -745,7 +885,7 @@ public class SJLogListViewController: UIViewController {
         }
         
         updateActionMenu()
-        tableView.reloadData()
+        updateUI()
     }
     
     @objc private func exportLogs() {
@@ -761,9 +901,6 @@ public class SJLogListViewController: UIViewController {
             // 获取选中的日志
             let logsToExport = filteredLogs.filter { selectedLogs.contains($0.id) }
             performExport(logsToExport)
-            
-            // 退出编辑模式
-            toggleSelectionMode()
         } else {
             // 普通模式，导出全部
             performExport(filteredLogs)
@@ -778,33 +915,11 @@ public class SJLogListViewController: UIViewController {
             return
         }
         
-        // 生成日志文本
-        var text = "========== SJLogger 日志导出 ==========\n"
-        text += "导出时间: \(formatDate(Date()))\n"
-        text += "日志数量: \(logs.count)\n"
-        text += "========================================\n\n"
-        
-        for (index, log) in logs.enumerated() {
-            text += "[\(index + 1)/\(logs.count)]\n"
-            text += log.generateLogText()
-            text += "\n========================================\n\n"
+        SJLogFileSharing.present(contents: SJLogExporter.text(for: logs), from: self, sourceView: moreButton) { [weak self] in
+            if self?.isSelectionMode == true { self?.toggleSelectionMode() }
         }
-        
-        let activityVC = UIActivityViewController(activityItems: [text], applicationActivities: nil)
-        
-        if let popover = activityVC.popoverPresentationController {
-            popover.sourceView = moreButton
-            popover.sourceRect = moreButton.bounds
-        }
-        
-        present(activityVC, animated: true)
     }
-    
-    private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return formatter.string(from: date)
-    }
+
 }
 
 // MARK: - UITableViewDataSource
@@ -842,18 +957,21 @@ extension SJLogListViewController: UITableViewDelegate {
             } else {
                 selectedLogs.insert(log.id)
             }
-            tableView.reloadRows(at: [indexPath], with: .none)
+            tableView.deselectRow(at: indexPath, animated: false)
+            updateActionMenu()
+            updateUI()
         } else {
             // 普通模式：打开详情
             tableView.deselectRow(at: indexPath, animated: true)
-            let detailVC = SJLogDetailViewController(log: log)
+            let detailVC = SJLogDetailViewController(log: log, updatesFromStorage: !isSnapshotMode)
             navigationController?.pushViewController(detailVC, animated: true)
         }
     }
     
     public func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        guard !isSelectionMode else { return nil }
         let log = filteredLogs[indexPath.row]
-        
+
         let deleteAction = UIContextualAction(style: .destructive, title: "删除") { _, _, completion in
             SJLoggerStorage.shared.removeLog(byId: log.id)
             completion(true)
@@ -867,17 +985,11 @@ extension SJLogListViewController: UITableViewDelegate {
         shareAction.backgroundColor = .systemBlue
         shareAction.image = UIImage(systemName: "square.and.arrow.up")
         
-        return UISwipeActionsConfiguration(actions: [deleteAction, shareAction])
+        return UISwipeActionsConfiguration(actions: isSnapshotMode ? [shareAction] : [deleteAction, shareAction])
     }
     
     private func shareLog(_ log: SJLoggerModel) {
-        let text = log.generateLogText()
-        let activityVC = UIActivityViewController(activityItems: [text], applicationActivities: nil)
-        if let popover = activityVC.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
-        }
-        present(activityVC, animated: true)
+        SJLogFileSharing.present(contents: log.generateLogText(), from: self, sourceView: moreButton)
     }
 }
 
@@ -885,13 +997,9 @@ extension SJLogListViewController: UITableViewDelegate {
 extension SJLogListViewController: UISearchBarDelegate {
     
     public func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
-        Self.savedSearchText = searchText
+        searchBar.text = searchText
         query.keyword = searchText
         applyQuery(reload: true)
-        // 接口分组同步搜索
-        if segmentedControl.selectedSegmentIndex == 1 {
-            endpointsVC.setKeyword(searchText)
-        }
     }
     
     public func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
@@ -907,11 +1015,12 @@ extension SJLogListViewController: UISearchBarDelegate {
 extension SJLogListViewController {
     public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         // 用户开始浏览历史时，自动切到固定模式，避免被新日志打断
-        if SJLoggerConfig.shared.autoFreezeOnInteraction,
+        if !isSnapshotMode, SJLoggerConfig.shared.autoFreezeOnInteraction,
            refreshMode == .live,
            scrollView.contentOffset.y > 20 {
             refreshMode = .frozen
             updateActionMenu()
+            updateUI()
         }
     }
 

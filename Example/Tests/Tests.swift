@@ -24,10 +24,16 @@ class Tests: XCTestCase {
 
     private var configSnapshot: ConfigSnapshot!
     private var loggerWasStarted = false
+    private var savedBodyDecryptor: ((Data) -> String?)?
+    private var savedBusinessParser: ((SJLoggerModel) -> SJBusinessResult?)?
 
     override func setUp() {
         super.setUp()
         let config = SJLoggerConfig.shared
+        savedBodyDecryptor = config.bodyDecryptor
+        savedBusinessParser = config.businessResultParser
+        config.bodyDecryptor = nil
+        config.businessResultParser = SJBusinessResult.parseJSONEnvelope
         configSnapshot = ConfigSnapshot(
             isEnabled: config.isEnabled,
             maxLogCount: config.maxLogCount,
@@ -57,6 +63,8 @@ class Tests: XCTestCase {
         config.enableWebSocketLog = true
         config.printToConsole = false
         config.persistLogs = false
+        config.slowRequestThresholdMs = 1000
+        config.autoFreezeOnInteraction = false
         SJLoggerStorage.shared.clearCurrentLogs()
     }
 
@@ -70,6 +78,8 @@ class Tests: XCTestCase {
         }
 
         let config = SJLoggerConfig.shared
+        config.bodyDecryptor = savedBodyDecryptor
+        config.businessResultParser = savedBusinessParser
         config.isEnabled = configSnapshot.isEnabled
         config.maxLogCount = configSnapshot.maxLogCount
         config.monitoredURLPatterns = configSnapshot.monitoredURLPatterns
@@ -481,7 +491,7 @@ class Tests: XCTestCase {
                     durationMs: Double(index * 10))
         }
         let viewController = SJLogListViewController(title: "布局测试", logs: logs)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let window = makeTestWindow(size: CGSize(width: 390, height: 844))
         window.rootViewController = viewController
         window.makeKeyAndVisible()
         viewController.view.frame = window.bounds
@@ -510,6 +520,477 @@ class Tests: XCTestCase {
                                                  targetContentOffset: &targetOffset)
         viewController.view.layoutIfNeeded()
         XCTAssertEqual(filterBar.superview?.bounds.height ?? -1, 40, accuracy: 0.5)
+    }
+
+    func testEndpointSearchCancelRestoresResultsAndBodySearchMatchesRequests() throws {
+        SJLoggerConfig.shared.defaultRefreshMode = .live
+        SJLoggerStorage.shared.addLog(makeLog(responseBody: "unique-payload"))
+        let vc = SJLogListViewController()
+        vc.loadViewIfNeeded()
+        let table: UITableView = try XCTUnwrap(firstSubview(in: vc.view))
+        waitUntil { table.numberOfRows(inSection: 0) == 1 }
+        let segments: UISegmentedControl = try XCTUnwrap(firstSubview(in: vc.view))
+        segments.selectedSegmentIndex = 1
+        segments.sendActions(for: .valueChanged)
+        let endpoint = try XCTUnwrap(vc.children.first as? SJEndpointListViewController)
+        let endpointTable: UITableView = try XCTUnwrap(firstSubview(in: endpoint.view))
+        waitUntil { endpointTable.numberOfRows(inSection: 0) == 1 }
+        let search: UISearchBar = try XCTUnwrap(firstSubview(in: vc.view))
+        vc.searchBar(search, textDidChange: "no-match")
+        waitUntil { endpointTable.numberOfRows(inSection: 0) == 0 }
+        vc.searchBarCancelButtonClicked(search)
+        waitUntil { endpointTable.numberOfRows(inSection: 0) == 1 }
+        vc.searchBar(search, textDidChange: "unique-payload")
+        waitUntil { endpointTable.numberOfRows(inSection: 0) == 1 }
+        vc.searchBarCancelButtonClicked(search)
+    }
+
+    func testFrozenEmptyListDisplaysFirstIncomingRequest() throws {
+        SJLoggerConfig.shared.defaultRefreshMode = .frozen
+        let vc = SJLogListViewController()
+        vc.loadViewIfNeeded()
+        let table: UITableView = try XCTUnwrap(firstSubview(in: vc.view))
+        let initial = expectation(description: "Initial empty storage read")
+        SJLoggerStorage.shared.getAllLogs { _ in initial.fulfill() }
+        wait(for: [initial], timeout: 2)
+        XCTAssertEqual(table.numberOfRows(inSection: 0), 0)
+        SJLoggerStorage.shared.addLog(makeLog(id: "first-arrival"))
+        waitUntil { table.numberOfRows(inSection: 0) == 1 }
+    }
+
+    func testFrozenListDetectsNewIDsAtCapacityAndRefreshesBothTabs() throws {
+        SJLoggerConfig.shared.defaultRefreshMode = .frozen
+        SJLoggerConfig.shared.maxLogCount = 2
+        SJLoggerStorage.shared.addLog(makeLog(id: "oldest", url: "https://example.com/oldest"))
+        SJLoggerStorage.shared.addLog(makeLog(id: "retained", url: "https://example.com/retained"))
+        let vc = SJLogListViewController()
+        vc.loadViewIfNeeded()
+        let table: UITableView = try XCTUnwrap(firstSubview(in: vc.view))
+        waitUntil { table.numberOfRows(inSection: 0) == 2 }
+        SJLoggerStorage.shared.addLog(makeLog(id: "new", url: "https://example.com/new"))
+        waitUntil { self.allSubviews(in: vc.view).compactMap { $0 as? UIButton }.contains {
+            !$0.isHidden && ($0.title(for: .normal)?.contains("1 条新请求") ?? false)
+        } }
+        let banner = try XCTUnwrap(allSubviews(in: vc.view).compactMap { $0 as? UIButton }.first {
+            $0.title(for: .normal)?.contains("1 条新请求") ?? false
+        })
+        banner.sendActions(for: .touchUpInside)
+        waitUntil { table.numberOfRows(inSection: 0) == 2 && banner.isHidden }
+        let segments: UISegmentedControl = try XCTUnwrap(firstSubview(in: vc.view))
+        segments.selectedSegmentIndex = 1
+        segments.sendActions(for: .valueChanged)
+        let endpoint = try XCTUnwrap(vc.children.first as? SJEndpointListViewController)
+        let endpointTable: UITableView = try XCTUnwrap(firstSubview(in: endpoint.view))
+        waitUntil { endpointTable.numberOfRows(inSection: 0) == 2 }
+        SJLoggerStorage.shared.clearCurrentLogs()
+        waitUntil { table.numberOfRows(inSection: 0) == 0 && endpointTable.numberOfRows(inSection: 0) == 0 }
+    }
+
+    func testPendingRequestIsNotFailureAndSearchIncludesHeaders() {
+        let pending = makeLog(status: nil)
+        let redirect = makeLog(status: 302)
+        let failed = makeLog(status: 503)
+        var query = SJLogQuery()
+        query.onlyFailed = true
+        XCTAssertEqual(query.apply(to: [pending, redirect, failed]).map(\.id), [failed.id])
+        query = SJLogQuery()
+        pending.requestHeaders = ["X-Trace": "trace-value"]
+        query.keyword = "  TRACE-VALUE  "
+        XCTAssertEqual(query.apply(to: [pending]).map(\.id), [pending.id])
+    }
+
+    func testOpenDetailUpdatesWhenRequestCompletes() {
+        let log = makeLog(id: "detail-pending", status: nil)
+        SJLoggerStorage.shared.addLog(log)
+        let vc = SJLogDetailViewController(log: log)
+        vc.loadViewIfNeeded()
+        SJLoggerStorage.shared.updateLog(byId: log.id) {
+            $0.statusCode = 200
+            $0.responseBody = Data("completed-response".utf8)
+            $0.endTime = Date()
+        }
+        waitUntil { self.allSubviews(in: vc.view).compactMap { $0 as? UITextView }.contains {
+            $0.text.contains("completed-response")
+        } }
+    }
+
+    func testResetFiltersRestoresRowsAndCountsAfterScrolling() throws {
+        let logs = (0..<30).map { makeLog(id: "scroll-\($0)", url: "https://example.com/items/\($0)") }
+        let vc = SJLogListViewController(title: "历史日志", logs: logs)
+        let window = makeTestWindow(size: CGSize(width: 320, height: 568))
+        window.rootViewController = vc
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        vc.view.layoutIfNeeded()
+        let table: UITableView = try XCTUnwrap(firstSubview(in: vc.view))
+        table.setContentOffset(CGPoint(x: 0, y: 1800), animated: false)
+        let search: UISearchBar = try XCTUnwrap(firstSubview(in: vc.view))
+        vc.searchBar(search, textDidChange: "no-such-request")
+        XCTAssertEqual(table.numberOfRows(inSection: 0), 0)
+        let reset = try XCTUnwrap(allSubviews(in: vc.view).first { $0.accessibilityIdentifier == "logger.resetFilters" } as? UIButton)
+        XCTAssertFalse(reset.isHidden)
+        let status = try XCTUnwrap(allSubviews(in: vc.view).first { $0.accessibilityIdentifier == "logger.status" } as? UILabel)
+        XCTAssertTrue(status.text?.contains("0 / 30") == true)
+        reset.sendActions(for: .touchUpInside)
+        XCTAssertEqual(table.numberOfRows(inSection: 0), 30)
+        XCTAssertEqual(table.contentOffset.y, -table.adjustedContentInset.top, accuracy: 1)
+        XCTAssertTrue(reset.isHidden)
+        XCTAssertTrue(status.text?.contains("30 / 30") == true)
+        XCTAssertFalse(table.visibleCells.isEmpty)
+        let swipe = vc.tableView(table, trailingSwipeActionsConfigurationForRowAt: IndexPath(row: 0, section: 0))
+        XCTAssertEqual(swipe?.actions.map(\.title), ["分享"])
+        attachScreenshot(window, name: "Small-screen-list")
+        window.overrideUserInterfaceStyle = .dark
+        vc.searchBar(search, textDidChange: "no-such-request")
+        vc.view.layoutIfNeeded()
+        attachScreenshot(window, name: "Dark-filter-empty-state")
+    }
+
+    func testSelectionCanToggleSameRowTwiceAndResumeUpdates() throws {
+        SJLoggerConfig.shared.defaultRefreshMode = .live
+        SJLoggerStorage.shared.addLog(makeLog(id: "selectable"))
+        let vc = SJLogListViewController()
+        vc.loadViewIfNeeded()
+        let table: UITableView = try XCTUnwrap(firstSubview(in: vc.view))
+        waitUntil { table.numberOfRows(inSection: 0) == 1 }
+        _ = vc.perform(NSSelectorFromString("toggleSelectionMode"))
+        let status = try XCTUnwrap(allSubviews(in: vc.view).first { $0.accessibilityIdentifier == "logger.status" } as? UILabel)
+        vc.tableView(table, didSelectRowAt: IndexPath(row: 0, section: 0))
+        XCTAssertEqual(status.text, "已选 1 / 1 条")
+        vc.tableView(table, didSelectRowAt: IndexPath(row: 0, section: 0))
+        XCTAssertEqual(status.text, "已选 0 / 1 条")
+        SJLoggerStorage.shared.addLog(makeLog(id: "after-selection"))
+        _ = vc.perform(NSSelectorFromString("toggleSelectionMode"))
+        waitUntil { table.numberOfRows(inSection: 0) == 2 }
+    }
+
+    func testFrozenTabsStayConsistentUntilExplicitRefresh() throws {
+        SJLoggerConfig.shared.defaultRefreshMode = .frozen
+        SJLoggerStorage.shared.addLog(makeLog(id: "visible", url: "https://example.com/visible"))
+        let vc = SJLogListViewController()
+        vc.loadViewIfNeeded()
+        let table: UITableView = try XCTUnwrap(firstSubview(in: vc.view))
+        waitUntil { table.numberOfRows(inSection: 0) == 1 }
+        let segments: UISegmentedControl = try XCTUnwrap(firstSubview(in: vc.view))
+        segments.selectedSegmentIndex = 1
+        segments.sendActions(for: .valueChanged)
+        let endpoint = try XCTUnwrap(vc.children.first as? SJEndpointListViewController)
+        let endpointTable: UITableView = try XCTUnwrap(firstSubview(in: endpoint.view))
+        SJLoggerStorage.shared.addLog(makeLog(id: "pending", url: "https://example.com/pending"))
+        waitUntil { self.allSubviews(in: vc.view).compactMap { $0 as? UIButton }.contains {
+            !$0.isHidden && ($0.title(for: .normal)?.contains("1 条新请求") ?? false)
+        } }
+        XCTAssertEqual(endpointTable.numberOfRows(inSection: 0), 1)
+        XCTAssertEqual(table.numberOfRows(inSection: 0), 1)
+        endpointTable.refreshControl?.sendActions(for: .valueChanged)
+        waitUntil { endpointTable.numberOfRows(inSection: 0) == 2 && table.numberOfRows(inSection: 0) == 2 }
+    }
+
+    func testRequestEndpointAndDetailLayouts() throws {
+        SJLoggerConfig.shared.defaultRefreshMode = .live
+        for index in 0..<9 {
+            SJLoggerStorage.shared.addLog(makeLog(id: "preview-\(index)",
+                url: "https://api.example.com/v1/\(index < 3 ? "profile" : "feed/\(index)")",
+                method: index % 2 == 0 ? .get : .post, status: index % 3 == 0 ? 500 : 200,
+                durationMs: index % 3 == 0 ? 2400 : 120,
+                responseBody: "{\"message\":\"Sample response\",\"items\":[1,2,3]}"))
+        }
+        let vc = SJLogListViewController()
+        let nav = UINavigationController(rootViewController: vc)
+        let window = makeTestWindow(size: CGSize(width: 390, height: 844))
+        window.rootViewController = nav
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let table: UITableView = try XCTUnwrap(firstSubview(in: vc.view))
+        waitUntil { table.numberOfRows(inSection: 0) == 9 }
+        window.layoutIfNeeded()
+        nav.view.frame = window.bounds
+        nav.view.layoutIfNeeded()
+        vc.view.layoutIfNeeded()
+        XCTAssertGreaterThan(table.bounds.height, 200)
+        attachScreenshot(window, name: "Request-list")
+        let segments: UISegmentedControl = try XCTUnwrap(firstSubview(in: vc.view))
+        segments.selectedSegmentIndex = 1
+        segments.sendActions(for: .valueChanged)
+        vc.view.layoutIfNeeded()
+        let endpoint = try XCTUnwrap(vc.children.first as? SJEndpointListViewController)
+        let endpointTable: UITableView = try XCTUnwrap(firstSubview(in: endpoint.view))
+        XCTAssertEqual(endpointTable.numberOfRows(inSection: 0), 7)
+        attachScreenshot(window, name: "Endpoint-list")
+        segments.selectedSegmentIndex = 0
+        segments.sendActions(for: .valueChanged)
+        let animations = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer { UIView.setAnimationsEnabled(animations) }
+        vc.tableView(table, didSelectRowAt: IndexPath(row: 0, section: 0))
+        nav.view.layoutIfNeeded()
+        let detail = try XCTUnwrap(nav.topViewController as? SJLogDetailViewController)
+        waitUntil { nav.transitionCoordinator == nil }
+        nav.view.layoutIfNeeded()
+        detail.view.layoutIfNeeded()
+        XCTAssertFalse(allSubviews(in: detail.view).compactMap { $0 as? UITextView }.isEmpty)
+        attachScreenshot(window, name: "Request-detail")
+    }
+
+    func testBusinessFailureWithHTTP200AffectsQueryStatsAndExport() throws {
+        let failed = makeLog(id: "business-failure", status: 200,
+                             responseBody: #"{"code":4,"message":"库存不足","data":null}"#)
+        let success = makeLog(id: "business-success", status: 200,
+                              responseBody: #"{"code":0,"message":"ok","data":{}}"#)
+        XCTAssertEqual(failed.businessError?.code, "4")
+        XCTAssertEqual(failed.businessError?.message, "库存不足")
+        XCTAssertEqual(failed.statusCode, 200)
+        XCTAssertNil(failed.error)
+        XCTAssertFalse(failed.isSuccess)
+        XCTAssertTrue(failed.isFailure)
+        XCTAssertTrue(success.isSuccess)
+        XCTAssertFalse(success.isFailure)
+        var query = SJLogQuery()
+        query.onlyFailed = true
+        XCTAssertEqual(query.apply(to: [success, failed]).map(\.id), [failed.id])
+        query.onlyFailed = false
+        query.statusBuckets = [.businessError]
+        XCTAssertEqual(query.apply(to: [success, failed]).map(\.id), [failed.id])
+        let groups = SJEndpointGroup.build(from: [failed, success])
+        XCTAssertEqual(groups.first?.failedCount, 1)
+        XCTAssertEqual(groups.first?.successCount, 1)
+        XCTAssertEqual(groups.first?.successRate, 0.5)
+        XCTAssertTrue(failed.generateLogText().contains("Business Message: 库存不足"))
+        let har = try XCTUnwrap(SJLogExporter.har(for: [failed]).data(using: .utf8))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: har) as? [String: Any])
+        let harLog = try XCTUnwrap(json["log"] as? [String: Any])
+        let entry = try XCTUnwrap((harLog["entries"] as? [[String: Any]])?.first)
+        XCTAssertEqual((entry["response"] as? [String: Any])?["status"] as? Int, 200)
+        XCTAssertEqual((entry["_businessResult"] as? [String: Any])?["message"] as? String, "库存不足")
+        SJLoggerStorage.shared.addLog(success)
+        SJLoggerStorage.shared.addLog(failed)
+        let read = expectation(description: "Business failures counted by storage")
+        SJLoggerStorage.shared.getStatistics { stats in
+            XCTAssertEqual(stats["success"] as? Int, 1)
+            XCTAssertEqual(stats["failed"] as? Int, 1)
+            read.fulfill()
+        }
+        wait(for: [read], timeout: 2)
+    }
+
+    func testBusinessParserHandlesStringsUnknownBodiesAndWebSocket() {
+        for code in [1, 2, 4, 5, 98, 99] {
+            let log = makeLog(responseBody: "{\"code\":\(code),\"message\":\"服务端错误\"}")
+            XCTAssertTrue(log.isFailure)
+        }
+        let stringCode = makeLog(responseBody: #"{"code":"5","msg":"登录已过期"}"#)
+        XCTAssertEqual(stringCode.businessError?.code, "5")
+        for body in [#"{"code":true,"message":"flag"}"#, #"{"code":4}"#,
+                     #"{"code":null,"message":"missing"}"#, #"{"code":4.5,"message":"invalid"}"#,
+                     #"{"data":{"code":4,"message":"nested"}}"#, "not-json", "[]"] {
+            let log = makeLog(responseBody: body)
+            XCTAssertNil(log.businessResult, body)
+            XCTAssertTrue(log.isSuccess, body)
+        }
+        let ws = SJLoggerModel(type: .websocket, url: "wss://example.com/socket")
+        ws.responseBody = Data(#"{"code":4,"message":"event"}"#.utf8)
+        XCTAssertNil(ws.businessResult)
+        XCTAssertNil(makeLog(status: nil).businessResult)
+        let httpFailure = makeLog(status: 500, responseBody: #"{"code":0,"message":"ok"}"#)
+        XCTAssertFalse(httpFailure.isSuccess)
+        XCTAssertTrue(httpFailure.isFailure)
+    }
+
+    func testBusinessResultUsesDecryptedBodyAndSurvivesPersistence() throws {
+        let encrypted = Data("encrypted-test-payload".utf8)
+        SJLoggerConfig.shared.bodyDecryptor = { data in
+            data == encrypted ? #"{"code":99,"message":"服务器内部错误"}"# : nil
+        }
+        let log = makeLog(status: 200)
+        log.responseBody = encrypted
+        XCTAssertEqual(log.businessError?.code, "99")
+        XCTAssertEqual(log.responseBody, encrypted)
+        let decoded = try JSONDecoder().decode(SJLoggerModel.self, from: JSONEncoder().encode(log))
+        XCTAssertEqual(decoded.businessError?.message, "服务器内部错误")
+        XCTAssertEqual(decoded.snapshot().businessError, log.businessError)
+        XCTAssertEqual(decoded.responseBody, encrypted)
+        log.responseBody = Data(#"{"code":0,"message":"ok"}"#.utf8)
+        XCTAssertTrue(log.isSuccess)
+        XCTAssertNil(log.businessError)
+    }
+
+    func testBusinessParserCanBeScopedCustomizedAndDisabled() {
+        let failure = makeLog(responseBody: #"{"code":4,"message":"失败"}"#)
+        SJLoggerConfig.shared.businessResultParser = nil
+        XCTAssertNil(failure.businessResult)
+        XCTAssertTrue(failure.isSuccess)
+        SJLoggerConfig.shared.businessResultParser = { log in
+            guard log.host == "api.example.com" else { return nil }
+            return SJBusinessResult(code: "E_STOCK", message: "库存不足", isSuccess: false)
+        }
+        XCTAssertNil(failure.businessResult)
+        let custom = makeLog(url: "https://api.example.com/items", responseBody: "custom-envelope")
+        XCTAssertEqual(custom.businessError?.code, "E_STOCK")
+        XCTAssertFalse(custom.isSuccess)
+        var query = SJLogQuery()
+        query.keyword = "库存不足"
+        XCTAssertEqual(query.apply(to: [custom, failure]).map(\.id), [custom.id])
+    }
+
+    func testBusinessFailureIsVisibleInListDetailAndClearedOnCellReuse() throws {
+        let log = makeLog(status: 200, responseBody: #"{"code":4,"message":"库存不足，请减少购买数量"}"#)
+        let cell = SJLogCell(style: .default, reuseIdentifier: nil)
+        cell.configure(with: log)
+        let label = try XCTUnwrap(allSubviews(in: cell).first {
+            $0.accessibilityIdentifier == "logger.businessError"
+        } as? UILabel)
+        XCTAssertFalse(label.isHidden)
+        XCTAssertTrue(label.text?.contains("库存不足") == true)
+        XCTAssertTrue(cell.accessibilityLabel?.contains("业务失败") == true)
+        cell.configure(with: makeLog(responseBody: #"{"code":0,"message":"ok"}"#))
+        XCTAssertTrue(label.isHidden)
+        XCTAssertNil(label.text)
+
+        let vc = SJLogListViewController(title: "业务错误", logs: [log])
+        let window = makeTestWindow(size: CGSize(width: 320, height: 568))
+        window.rootViewController = vc
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        window.layoutIfNeeded()
+        let table: UITableView = try XCTUnwrap(firstSubview(in: vc.view))
+        XCTAssertEqual(table.numberOfRows(inSection: 0), 1)
+        XCTAssertGreaterThan(table.rectForRow(at: IndexPath(row: 0, section: 0)).height, 80)
+        attachScreenshot(window, name: "Business-error-list")
+        let detail = SJLogDetailViewController(log: log, updatesFromStorage: false)
+        window.rootViewController = detail
+        window.layoutIfNeeded()
+        XCTAssertTrue(allSubviews(in: detail.view).compactMap { $0 as? UITextView }.contains {
+            $0.text.contains("业务码: 4") && $0.text.contains("库存不足")
+        })
+        attachScreenshot(window, name: "Business-error-detail")
+    }
+
+    func testBusinessErrorAppearsWhenPendingResponseCompletes() throws {
+        SJLoggerConfig.shared.defaultRefreshMode = .live
+        let pending = makeLog(id: "pending-business", status: nil)
+        SJLoggerStorage.shared.addLog(pending)
+        let list = SJLogListViewController()
+        list.loadViewIfNeeded()
+        let table: UITableView = try XCTUnwrap(firstSubview(in: list.view))
+        waitUntil { table.numberOfRows(inSection: 0) == 1 }
+        let filter: SJCompactFilterBar = try XCTUnwrap(firstSubview(in: list.view))
+        filter.onSelect?(1)
+        XCTAssertEqual(table.numberOfRows(inSection: 0), 0)
+        let detail = SJLogDetailViewController(log: pending)
+        detail.loadViewIfNeeded()
+        SJLoggerStorage.shared.updateLog(byId: pending.id) {
+            $0.statusCode = 200
+            $0.responseBody = Data(#"{"code":5,"message":"登录已过期"}"#.utf8)
+            $0.endTime = Date()
+        }
+        waitUntil { table.numberOfRows(inSection: 0) == 1 }
+        waitUntil { self.allSubviews(in: detail.view).compactMap { $0 as? UITextView }.contains {
+            $0.text.contains("业务码: 5")
+        } }
+    }
+
+    func testTextShareExportsAReadableFileWithOnlyRequestedLogs() throws {
+        let first = makeLog(id: "included", responseBody: #"{"code":4,"message":"库存不足"}"#)
+        let file = try SJLogExporter.exportFile(for: [first])
+        defer { try? FileManager.default.removeItem(at: file) }
+        XCTAssertTrue(file.isFileURL)
+        XCTAssertEqual(file.pathExtension, "txt")
+        let content = try String(contentsOf: file, encoding: .utf8)
+        XCTAssertTrue(content.contains("日志数量: 1"))
+        XCTAssertTrue(content.contains("ID: included"))
+        XCTAssertTrue(content.contains("Business Message: 库存不足"))
+        XCTAssertThrowsError(try SJLogExporter.exportFile(for: []))
+    }
+
+    func testHARShareExportsJSONFileAndRepeatedExportsDoNotOverwrite() throws {
+        let log = makeLog(status: 200, responseBody: #"{"code":4,"message":"业务错误"}"#)
+        let first = try SJLogExporter.exportFile(for: [log], format: .har)
+        let second = try SJLogExporter.exportFile(for: [log], format: .har)
+        defer {
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+        }
+        XCTAssertNotEqual(first, second)
+        XCTAssertEqual(first.pathExtension, "har")
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: first)) as? [String: Any])
+        let har = try XCTUnwrap(root["log"] as? [String: Any])
+        let entries = try XCTUnwrap(har["entries"] as? [[String: Any]])
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual((entries[0]["response"] as? [String: Any])?["status"] as? Int, 200)
+        XCTAssertEqual((entries[0]["_businessResult"] as? [String: Any])?["code"] as? String, "4")
+        XCTAssertEqual(try Data(contentsOf: first), try Data(contentsOf: second))
+    }
+
+    func testExportFileCleanupPreservesRecentAttachmentsAndWriteErrorsPropagate() throws {
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appendingPathComponent("SJLogger-export-test-" + UUID().uuidString)
+        defer { try? fm.removeItem(at: folder) }
+        let old = try SJLogExporter.writeFile(contents: "old", format: .text, directory: folder)
+        let unrelated = folder.appendingPathComponent("unrelated.txt")
+        try Data("keep".utf8).write(to: unrelated)
+        let expiry = Date().addingTimeInterval(-8 * 24 * 60 * 60)
+        try fm.setAttributes([.modificationDate: expiry], ofItemAtPath: old.path)
+        try fm.setAttributes([.modificationDate: expiry], ofItemAtPath: unrelated.path)
+        let current = try SJLogExporter.writeFile(contents: "current", format: .text, directory: folder)
+        _ = try SJLogExporter.writeFile(contents: "next", format: .har, directory: folder)
+        XCTAssertFalse(fm.fileExists(atPath: old.path))
+        XCTAssertEqual(try String(contentsOf: current), "current")
+        XCTAssertTrue(fm.fileExists(atPath: unrelated.path))
+        XCTAssertThrowsError(try SJLogExporter.writeFile(contents: "fail", format: .text, directory: current))
+    }
+
+    func testDetailSharePresentsFileAndKeepsAttachmentAfterCancel() throws {
+        let marker = "share-file-" + UUID().uuidString
+        let vc = SJLogDetailViewController(log: makeLog(id: marker), updatesFromStorage: false)
+        let window = makeTestWindow(size: CGSize(width: 390, height: 844))
+        window.rootViewController = vc
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        window.layoutIfNeeded()
+        _ = vc.perform(NSSelectorFromString("shareLog"))
+        waitUntil { vc.presentedViewController is UIActivityViewController }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("SJLogger-Exports")
+        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+        let file = try XCTUnwrap(files.first {
+            (try? String(contentsOf: $0, encoding: .utf8).contains(marker)) == true
+        })
+        defer { try? FileManager.default.removeItem(at: file) }
+        XCTAssertEqual(file.pathExtension, "txt")
+        let sheet = try XCTUnwrap(vc.presentedViewController as? UIActivityViewController)
+        sheet.completionWithItemsHandler?(nil, false, nil, nil)
+        vc.dismiss(animated: false)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    private func makeTestWindow(size: CGSize) -> UIWindow {
+        let window: UIWindow
+        if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
+            window = UIWindow(windowScene: scene)
+        } else {
+            window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        }
+        window.frame = CGRect(origin: .zero, size: size)
+        return window
+    }
+
+    private func attachScreenshot(_ window: UIWindow, name: String) {
+        window.layoutIfNeeded()
+        let attachment = XCTAttachment(image: UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.layer.render(in: UIGraphicsGetCurrentContext()!)
+        })
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func allSubviews(in view: UIView) -> [UIView] {
+        return [view] + view.subviews.flatMap { allSubviews(in: $0) }
+    }
+
+    private func waitUntil(file: StaticString = #filePath, line: UInt = #line,
+                           _ condition: @escaping () -> Bool) {
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition() }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 3), .completed, file: file, line: line)
     }
 
     private func firstSubview<T: UIView>(in view: UIView) -> T? {

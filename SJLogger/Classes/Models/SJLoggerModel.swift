@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 // MARK: - 日志类型
 /// 日志类型枚举
@@ -30,6 +31,41 @@ public enum SJHTTPMethod: String, Codable {
     case options = "OPTIONS"
     case trace = "TRACE"
     case connect = "CONNECT"
+}
+
+/// App 响应中的业务结果，与 HTTP 状态码相互独立。
+public struct SJBusinessResult: Codable, Equatable {
+    public let code: String
+    public let message: String
+    public let isSuccess: Bool
+
+    public init(code: String, message: String, isSuccess: Bool) {
+        self.code = code
+        self.message = message
+        self.isSuccess = isSuccess
+    }
+
+    /// 默认协议：顶层 code + message（或 msg），code 为整数或整数字符串，0 成功。
+    /// 不把任意业务对象中的 code、布尔值、嵌套字段或无效 JSON 猜测成错误。
+    public static func parseJSONEnvelope(_ log: SJLoggerModel) -> SJBusinessResult? {
+        guard let text = log.responseBodyString,
+              let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let message = (json["message"] as? String) ?? (json["msg"] as? String) else { return nil }
+        let code: String
+        if let number = json["code"] as? NSNumber {
+            guard CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.doubleValue.isFinite,
+                  number.doubleValue.rounded() == number.doubleValue else { return nil }
+            code = number.stringValue
+        } else if let value = json["code"] as? String,
+                  let number = Int64(value.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            code = String(number)
+        } else {
+            return nil
+        }
+        return SJBusinessResult(code: code, message: message, isSuccess: code == "0")
+    }
 }
 
 // MARK: - 日志模型
@@ -113,12 +149,30 @@ public class SJLoggerModel: Codable {
         return SJLoggerConfig.shared.displayString(forBody: data)
     }
     
-    /// 是否成功
+    /// 仅 HTTP/HTTPS 响应参与业务判断，复用展示用解密器，不修改原始响应。
+    public var businessResult: SJBusinessResult? {
+        guard type == .http || type == .https, responseBody != nil else { return nil }
+        return SJLoggerConfig.shared.businessResultParser?(self)
+    }
+
+    public var businessError: SJBusinessResult? {
+        guard let result = businessResult, !result.isSuccess else { return nil }
+        return result
+    }
+
+    /// HTTP 成功且不存在传输错误或明确的业务失败。
     public var isSuccess: Bool {
         guard let code = statusCode else { return false }
-        return (200...299).contains(code)
+        return (200...299).contains(code) && error == nil && businessError == nil
     }
     
+    /// 已明确失败的请求；进行中、重定向和正常 WebSocket 事件不算失败。
+    public var isFailure: Bool {
+        if error != nil || businessError != nil { return true }
+        guard type == .http || type == .https, let code = statusCode else { return false }
+        return code >= 400
+    }
+
     /// 响应大小（字节）
     public var responseSize: Int {
         return responseBody?.count ?? 0
@@ -190,6 +244,12 @@ public class SJLoggerModel: Codable {
             text += "Error: \(error)\n"
         }
         
+        if let result = businessResult {
+            text += "Business Result: \(result.isSuccess ? "成功" : "业务失败")\n"
+            text += "Business Code: \(result.code)\n"
+            text += "Business Message: \(result.message)\n"
+        }
+
         // 请求头
         if let headers = requestHeaders, !headers.isEmpty {
             text += "\n--- Request Headers ---\n"

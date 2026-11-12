@@ -6,7 +6,9 @@ public class SJLogDetailViewController: UIViewController {
     
     // MARK: - 属性
     
-    private let log: SJLoggerModel
+    private var log: SJLoggerModel
+    private let updatesFromStorage: Bool
+    private var refreshGeneration = 0
     
     // MARK: - UI组件
     
@@ -45,30 +47,14 @@ public class SJLogDetailViewController: UIViewController {
     private lazy var exportButton: UIButton = {
         return SJCustomNavigationBar.iconButton(systemName: "arrow.down.doc",
                                                 target: self,
-                                                action: #selector(showExportOptions))
+                                                action: #selector(exportButtonTapped))
     }()
-    
-    private func makeExportMenu() -> UIMenu {
-        let curl = UIAction(title: "复制为 cURL", image: UIImage(systemName: "terminal")) { [weak self] _ in
-            guard let self = self else { return }
-            UIPasteboard.general.string = SJLogExporter.curl(for: self.log)
-            self.showToast("已复制 cURL 命令")
-        }
-        let har = UIAction(title: "导出 HAR", image: UIImage(systemName: "doc.badge.gearshape")) { [weak self] _ in
-            guard let self = self else { return }
-            let text = SJLogExporter.har(for: [self.log])
-            let vc = UIActivityViewController(activityItems: [text], applicationActivities: nil)
-            vc.popoverPresentationController?.sourceView = self.exportButton
-            vc.popoverPresentationController?.sourceRect = self.exportButton.bounds
-            self.present(vc, animated: true)
-        }
-        return UIMenu(title: "导出", children: [curl, har])
-    }
     
     // MARK: - 初始化
     
-    public init(log: SJLoggerModel) {
+    public init(log: SJLoggerModel, updatesFromStorage: Bool = true) {
         self.log = log
+        self.updatesFromStorage = updatesFromStorage
         super.init(nibName: nil, bundle: nil)
     }
     
@@ -80,8 +66,34 @@ public class SJLogDetailViewController: UIViewController {
     
     public override func viewDidLoad() {
         super.viewDidLoad()
+        view.tintColor = SJLoggerConfig.shared.floatingWindowColor
         setupUI()
         loadLogDetails()
+        if updatesFromStorage {
+            NotificationCenter.default.addObserver(self, selector: #selector(refreshLog),
+                                                   name: SJLoggerStorage.logsDidUpdateNotification, object: nil)
+            refreshLog()
+        }
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    @objc private func refreshLog() {
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        SJLoggerStorage.shared.getLog(byId: log.id) { [weak self] latest in
+            guard let self = self, generation == self.refreshGeneration, let latest = latest else { return }
+            guard latest.statusCode != self.log.statusCode || latest.endTime != self.log.endTime
+                || latest.responseBody != self.log.responseBody || latest.error != self.log.error
+                || latest.requestHeaders != self.log.requestHeaders || latest.responseHeaders != self.log.responseHeaders
+                || latest.requestBody != self.log.requestBody else { return }
+            let offset = self.scrollView.contentOffset
+            self.log = latest
+            self.contentStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
+            self.loadLogDetails()
+            self.view.layoutIfNeeded()
+            self.scrollView.setContentOffset(offset, animated: false)
+        }
     }
     
     public override func viewWillAppear(_ animated: Bool) {
@@ -97,6 +109,23 @@ public class SJLogDetailViewController: UIViewController {
         
         customNavigationBar.setLeftButtons([
             SJCustomNavigationBar.iconButton(systemName: "chevron.left", target: self, action: #selector(backAction))
+        ])
+        copyButton.accessibilityLabel = "复制日志"
+        shareButton.accessibilityLabel = "分享日志"
+        exportButton.accessibilityLabel = "导出 cURL 或 HAR"
+        exportButton.removeTarget(self, action: #selector(exportButtonTapped), for: .touchUpInside)
+        exportButton.showsMenuAsPrimaryAction = true
+        exportButton.menu = UIMenu(title: "导出", children: [
+            UIAction(title: "复制为 cURL", image: UIImage(systemName: "terminal")) { [weak self] _ in
+                guard let self = self else { return }
+                UIPasteboard.general.string = SJLogExporter.curl(for: self.log)
+                self.showToast("已复制 cURL 命令")
+            },
+            UIAction(title: "导出 HAR 文件", image: UIImage(systemName: "doc")) { [weak self] _ in
+                guard let self = self else { return }
+                SJLogFileSharing.present(contents: SJLogExporter.har(for: [self.log]), format: .har,
+                                         from: self, sourceView: self.exportButton)
+            }
         ])
         customNavigationBar.setRightButtons([shareButton, exportButton, copyButton])
         
@@ -118,23 +147,29 @@ public class SJLogDetailViewController: UIViewController {
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             
-            contentStackView.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 16),
-            contentStackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 16),
-            contentStackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -16),
-            contentStackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -16),
-            contentStackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -32)
+            contentStackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            contentStackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            contentStackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            contentStackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            contentStackView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor)
         ])
     }
     
     // MARK: - 加载详情
     
     private func loadLogDetails() {
+        // HTTP 200 也可能业务失败，优先展示服务端返回的业务结果。
+        if let result = log.businessResult {
+            addSection(title: result.isSuccess ? "业务成功" : "业务失败",
+                       content: "业务码: \(result.code)\n业务说明: \(result.message.isEmpty ? "服务端未提供说明" : result.message)",
+                       color: result.isSuccess ? .systemGreen : .systemRed, copyable: true)
+        }
         // 基本信息
         addSection(title: "基本信息", items: [
             ("类型", log.type.rawValue),
             ("URL", log.url),
             ("方法", log.method?.rawValue ?? "-"),
-            ("状态码", log.statusCode != nil ? "\(log.statusCode!)" : "-"),
+            ("HTTP 状态码", log.statusCode != nil ? "\(log.statusCode!)" : "-"),
             ("开始时间", formatDate(log.startTime)),
             ("结束时间", log.endTime != nil ? formatDate(log.endTime!) : "-"),
             ("耗时", log.duration != nil ? "\(Int(log.duration!))ms" : "-"),
@@ -148,7 +183,7 @@ public class SJLogDetailViewController: UIViewController {
         
         // 请求头
         if let headers = log.requestHeaders, !headers.isEmpty {
-            let headersText = headers.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
+            let headersText = headers.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
             addSection(title: "请求头", content: headersText)
         }
         
@@ -160,7 +195,7 @@ public class SJLogDetailViewController: UIViewController {
         
         // 响应头
         if let headers = log.responseHeaders, !headers.isEmpty {
-            let headersText = headers.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
+            let headersText = headers.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
             addSection(title: "响应头", content: headersText)
         }
         
@@ -208,9 +243,16 @@ public class SJLogDetailViewController: UIViewController {
             textView.textColor = color
         }
         
+        textView.isSelectable = true
         if copyable {
-            let tapGesture = UITapGestureRecognizer(target: self, action: #selector(copyContent(_:)))
-            textView.addGestureRecognizer(tapGesture)
+            let copy = UIButton(type: .system)
+            copy.setTitle("复制\(title)", for: .normal)
+            copy.contentHorizontalAlignment = .trailing
+            copy.addAction(UIAction { [weak self] _ in
+                UIPasteboard.general.string = content
+                self?.showToast("已复制\(title)")
+            }, for: .touchUpInside)
+            sectionView.addArrangedSubview(copy)
         }
         
         sectionView.addArrangedSubview(textView)
@@ -274,29 +316,8 @@ public class SJLogDetailViewController: UIViewController {
         navigationController?.popViewController(animated: true)
     }
     
-    @objc private func showExportOptions() {
-        let alert = UIAlertController(title: "导出", message: nil, preferredStyle: .actionSheet)
-        alert.addAction(UIAlertAction(title: "复制为 cURL", style: .default) { [weak self] _ in
-            guard let self = self else { return }
-            UIPasteboard.general.string = SJLogExporter.curl(for: self.log)
-            self.showToast("已复制 cURL 命令")
-        })
-        alert.addAction(UIAlertAction(title: "导出 HAR", style: .default) { [weak self] _ in
-            guard let self = self else { return }
-            let text = SJLogExporter.har(for: [self.log])
-            let vc = UIActivityViewController(activityItems: [text], applicationActivities: nil)
-            vc.popoverPresentationController?.sourceView = self.exportButton
-            vc.popoverPresentationController?.sourceRect = self.exportButton.bounds
-            self.present(vc, animated: true)
-        })
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = exportButton
-            popover.sourceRect = exportButton.bounds
-        }
-        present(alert, animated: true)
-    }
-    
+    @objc private func exportButtonTapped() {}
+
     @objc private func copyLog() {
         let text = log.generateLogText()
         UIPasteboard.general.string = text
@@ -304,15 +325,7 @@ public class SJLogDetailViewController: UIViewController {
     }
     
     @objc private func shareLog() {
-        let text = log.generateLogText()
-        let activityVC = UIActivityViewController(activityItems: [text], applicationActivities: nil)
-        
-        if let popover = activityVC.popoverPresentationController {
-            popover.sourceView = shareButton
-            popover.sourceRect = shareButton.bounds
-        }
-        
-        present(activityVC, animated: true)
+        SJLogFileSharing.present(contents: log.generateLogText(), from: self, sourceView: shareButton)
     }
     
     @objc private func copyContent(_ gesture: UITapGestureRecognizer) {
