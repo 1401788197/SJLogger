@@ -226,3 +226,20 @@ class SJFloatingWindow: UIView {
 - [ ] 支持请求重放
 - [ ] 支持性能分析图表
 - [ ] 支持 gRPC 请求监控
+
+## 取消分类与终态保护（2026-11-24）
+
+- 取消仅匹配 `NSURLErrorDomain` + `NSURLErrorCancelled`；相同数值的其他错误域仍按失败处理。取消优先于已经收到的 HTTP 状态，保留原始响应与错误用于诊断。
+- 模型新增可选的 `errorDomain`、`errorCode`、`cancellationSource`，快照、Codable 和导出保留这些字段，兼容旧日志缺省字段。
+- `finishCurrentLog` 在锁内认领日志终态，并且只允许一次写回。完成结果先排入存储队列，再通知外层 client，避免外层回调重入 `stopLoading()` 时将成功覆盖为取消。
+- `stopLoading` 在取消底层任务之前记录取消来源；停止后抑制后续数据/完成回调。重定向继续分别记录原始跳转与目标请求。
+- 本次调整只影响日志分类和记录时序，不改动宿主 App 的页面取消逻辑或日志页面展示方式。
+
+验证：Xcode 26.6，iPhone 17 Pro / iOS 26.5 模拟器，完整 XCTest 共 46 项全部通过（新增 5 项），`git diff --check` 通过。覆盖取消与其他错误域的区分、筛选/统计/HAR、快照与旧格式解码、中性 UI、完成回调重入停止、响应期间主动取消，以及既有重定向流程。未进行宿主 Coolfly App 真机联调。
+
+```sh
+xcodebuild test -workspace Example/SJLogger.xcworkspace -scheme SJLogger-Example \
+  -destination 'platform=iOS Simulator,id=141A1EAB-A94C-4362-9B06-55B2245251B5' \
+  -derivedDataPath /tmp/sjlogger-cancellation-build \
+  -resultBundlePath /tmp/sjlogger-cancellation-tests.xcresult CODE_SIGNING_ALLOWED=NO
+```

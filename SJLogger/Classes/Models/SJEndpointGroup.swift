@@ -13,6 +13,8 @@ public struct SJEndpointGroup {
     public let successCount: Int
     /// 失败次数
     public let failedCount: Int
+    /// 取消次数（不计入成功率分母）
+    public let cancelledCount: Int
     /// 平均耗时（毫秒）
     public let averageDuration: Double
     /// 最近一次调用时间
@@ -26,8 +28,9 @@ public struct SJEndpointGroup {
     
     /// 成功率（0.0 ~ 1.0）
     public var successRate: Double {
-        guard count > 0 else { return 0 }
-        return Double(successCount) / Double(count)
+        let resolved = successCount + failedCount
+        guard resolved > 0 else { return 0 }
+        return Double(successCount) / Double(resolved)
     }
     
     /// 是否包含失败请求
@@ -74,6 +77,7 @@ extension SJEndpointGroup {
                 count: items.count,
                 successCount: success,
                 failedCount: failed,
+                cancelledCount: items.filter { $0.isCancelled }.count,
                 averageDuration: avg,
                 lastTime: lastTime,
                 lastStatusCode: latest.statusCode,

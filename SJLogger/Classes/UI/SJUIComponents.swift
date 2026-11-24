@@ -288,6 +288,8 @@ class SJStatsBar: UIView {
         summaryLabel.font = .systemFont(ofSize: 13, weight: .medium)
         summaryLabel.textColor = .secondaryLabel
         summaryLabel.numberOfLines = 1
+        summaryLabel.adjustsFontSizeToFitWidth = true
+        summaryLabel.minimumScaleFactor = 0.75
 
         detailLabel.font = .systemFont(ofSize: 11)
         detailLabel.textColor = .tertiaryLabel
@@ -333,15 +335,17 @@ class SJStatsBar: UIView {
         let total = logs.count
         let success = logs.filter { $0.isSuccess }.count
         let failed = logs.filter { $0.isFailure }.count
-        let rate = total > 0 ? Int((Double(success) / Double(total) * 100).rounded()) : 0
+        let cancelled = logs.filter { $0.isCancelled }.count
+        let resolved = success + failed
+        let rate = resolved > 0 ? Int((Double(success) / Double(resolved) * 100).rounded()) : 0
         let durations = logs.compactMap { $0.duration }
         let average = durations.isEmpty ? 0 : Int(durations.reduce(0, +) / Double(durations.count))
         let totalSize = logs.reduce(0) { $0 + $1.responseSize }
         let size = ByteCountFormatter.string(fromByteCount: Int64(totalSize), countStyle: .binary)
 
-        summaryLabel.text = "共 \(total) 条 · 成功 \(success) · 失败 \(failed)"
+        summaryLabel.text = "共 \(total) 条 · 成功 \(success) · 失败 \(failed) · 取消 \(cancelled)"
         detailLabel.text = "成功率 \(rate)% · 平均 \(average)ms · 流量 \(size)"
-        accessibilityLabel = "共 \(total) 条，成功 \(success) 条，失败 \(failed) 条，成功率 \(rate)%，平均耗时 \(average) 毫秒，流量 \(size)"
+        accessibilityLabel = "共 \(total) 条，成功 \(success) 条，失败 \(failed) 条，取消 \(cancelled) 条，成功率 \(rate)%，平均耗时 \(average) 毫秒，流量 \(size)"
         accessibilityHint = isExpanded ? "轻点收起统计详情" : "轻点展开统计详情"
     }
 

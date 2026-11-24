@@ -155,7 +155,10 @@ class SJLogCell: UITableViewCell {
         hostLabel.isHidden = !showsHost || log.host.isEmpty
         hostSeparator.isHidden = hostLabel.isHidden
 
-        if log.error != nil {
+        if log.isCancelled {
+            statusLabel.text = "已取消"
+            statusLabel.textColor = .secondaryLabel
+        } else if log.error != nil || log.errorCode != nil {
             statusLabel.text = "失败"
             statusLabel.textColor = .systemRed
         } else if let statusCode = log.statusCode {
@@ -179,7 +182,7 @@ class SJLogCell: UITableViewCell {
             durationLabel.font = .systemFont(ofSize: 12)
         }
 
-        let businessError = log.businessError
+        let businessError = log.isCancelled ? nil : log.businessError
         businessErrorLabel.isHidden = businessError == nil
         businessErrorLabel.text = businessError.map {
             "业务失败 · \($0.code) · \($0.message.isEmpty ? "服务端未提供错误说明" : $0.message)"

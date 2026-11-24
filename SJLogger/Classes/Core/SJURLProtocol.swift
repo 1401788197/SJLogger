@@ -36,6 +36,7 @@ public class SJURLProtocol: URLProtocol {
     private var responseBodyBuffer: SJResponseBodyBuffer?
     private var currentLogID: String?
     private var hasForwardedRedirect = false
+    private var hasStopped = false
     private let stateLock = NSLock()
     
     // MARK: - URLProtocol Override
@@ -98,6 +99,12 @@ public class SJURLProtocol: URLProtocol {
     
     /// 停止加载
     public override func stopLoading() {
+        // 先认领终态，再取消底层任务，防止取消回调抢先覆盖来源。
+        stateLock.lock()
+        let response = dataTask?.response
+        stateLock.unlock()
+        finishCurrentLog(with: response, error: URLError(.cancelled),
+                         cancellationSource: "URLProtocol.stopLoading", stopping: true)
         stateLock.lock()
         let task = dataTask
         let activeSession = session
@@ -107,7 +114,6 @@ public class SJURLProtocol: URLProtocol {
 
         task?.cancel()
         activeSession?.invalidateAndCancel()
-        finishCurrentLog(with: task?.response, error: URLError(.cancelled))
     }
     
     // MARK: - Helper Methods
@@ -169,15 +175,15 @@ public class SJURLProtocol: URLProtocol {
 
     private func appendResponseData(_ data: Data) {
         stateLock.lock()
-        if !hasForwardedRedirect {
+        if !hasForwardedRedirect && !hasStopped && currentLogID != nil {
             responseBodyBuffer?.append(data)
         }
         stateLock.unlock()
     }
 
-    private func shouldForwardClientCallbacks() -> Bool {
+    private func shouldForwardClientCallbacks(completing: Bool = false) -> Bool {
         stateLock.lock()
-        let shouldForward = !hasForwardedRedirect
+        let shouldForward = !hasForwardedRedirect && !hasStopped && (completing || currentLogID != nil)
         stateLock.unlock()
         return shouldForward
     }
@@ -189,18 +195,22 @@ public class SJURLProtocol: URLProtocol {
     }
 
     /// stop、redirect 和 completion 可能紧邻发生；只允许其中一个结束并写回日志。
-    private func finishCurrentLog(with response: URLResponse?, error: Error?) {
+    @discardableResult
+    private func finishCurrentLog(with response: URLResponse?, error: Error?,
+                                  cancellationSource: String? = nil, stopping: Bool = false) -> Bool {
         stateLock.lock()
+        if stopping { hasStopped = true }
         guard let logID = currentLogID else {
             stateLock.unlock()
-            return
+            return false
         }
         let data = responseBodyBuffer?.capturedData
         currentLogID = nil
         responseBodyBuffer = nil
         stateLock.unlock()
 
-        updateLog(logID: logID, with: response, data: data, error: error)
+        updateLog(logID: logID, with: response, data: data, error: error, cancellationSource: cancellationSource)
+        return true
     }
 
     private func releaseSession(_ completedSession: URLSession) {
@@ -214,7 +224,7 @@ public class SJURLProtocol: URLProtocol {
     }
     
     /// 更新日志响应信息
-    private func updateLog(logID: String, with response: URLResponse?, data: Data?, error: Error?) {
+    private func updateLog(logID: String, with response: URLResponse?, data: Data?, error: Error?, cancellationSource: String?) {
         let endTime = Date()
         var statusCode: Int?
         var responseHeaders: [String: String]?
@@ -227,11 +237,15 @@ public class SJURLProtocol: URLProtocol {
             responseHeaders = headers
         }
 
+        let nsError = error as NSError?
         SJLoggerStorage.shared.updateLog(byId: logID) { log in
             log.endTime = endTime
             log.statusCode = statusCode
             log.responseHeaders = responseHeaders
             log.error = error?.localizedDescription
+            log.errorDomain = nsError?.domain
+            log.errorCode = nsError?.code
+            log.cancellationSource = log.isCancelled ? (cancellationSource ?? "URLSession.didCompleteWithError") : nil
             log.responseBody = data
         }
     }
@@ -256,7 +270,9 @@ extension SJURLProtocol: URLSessionDataDelegate {
     }
     
     public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if shouldForwardClientCallbacks() {
+        // 必须在通知外层之前提交结果；外层回调可能同步触发 stopLoading。
+        let didFinish = finishCurrentLog(with: task.response, error: error)
+        if didFinish && shouldForwardClientCallbacks(completing: true) {
             if let error = error {
                 client?.urlProtocol(self, didFailWithError: error)
             } else {
@@ -264,13 +280,15 @@ extension SJURLProtocol: URLSessionDataDelegate {
             }
         }
         
-        finishCurrentLog(with: task.response, error: error)
         releaseSession(session)
     }
     
     public func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        guard finishCurrentLog(with: response, error: nil) else {
+            completionHandler(nil)
+            return
+        }
         markRedirectAsForwarded()
-        finishCurrentLog(with: response, error: nil)
         let redirectedRequest = Self.requestForFollowingRedirect(request)
         client?.urlProtocol(self, wasRedirectedTo: redirectedRequest, redirectResponse: response)
         completionHandler(nil)

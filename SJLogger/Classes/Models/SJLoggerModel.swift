@@ -91,6 +91,16 @@ public class SJLoggerModel: Codable {
     public var responseBody: Data?
     /// 错误信息
     public var error: String?
+    /// 原始 NSError 标识；旧版持久化日志缺少这些字段时保持 nil。
+    public var errorDomain: String?
+    public var errorCode: Int?
+    /// 仅记录拦截层可观察到的取消来源，不推断页面或业务原因。
+    public var cancellationSource: String?
+
+    public var isCancelled: Bool {
+        return errorDomain == NSURLErrorDomain && errorCode == NSURLErrorCancelled
+    }
+
     /// 请求开始时间
     public let startTime: Date
     /// 请求结束时间
@@ -163,12 +173,13 @@ public class SJLoggerModel: Codable {
     /// HTTP 成功且不存在传输错误或明确的业务失败。
     public var isSuccess: Bool {
         guard let code = statusCode else { return false }
-        return (200...299).contains(code) && error == nil && businessError == nil
+        return (200...299).contains(code) && error == nil && errorCode == nil && businessError == nil
     }
     
     /// 已明确失败的请求；进行中、重定向和正常 WebSocket 事件不算失败。
     public var isFailure: Bool {
-        if error != nil || businessError != nil { return true }
+        guard !isCancelled else { return false }
+        if error != nil || errorCode != nil || businessError != nil { return true }
         guard type == .http || type == .https, let code = statusCode else { return false }
         return code >= 400
     }
@@ -211,6 +222,9 @@ public class SJLoggerModel: Codable {
         copy.responseHeaders = responseHeaders
         copy.responseBody = responseBody
         copy.error = error
+        copy.errorDomain = errorDomain
+        copy.errorCode = errorCode
+        copy.cancellationSource = cancellationSource
         copy.endTime = endTime
         copy.tcpInfo = tcpInfo
         copy.wsDirection = wsDirection
@@ -240,6 +254,11 @@ public class SJLoggerModel: Codable {
             text += "Status Code: \(statusCode)\n"
         }
         
+        if isCancelled { text += "Result: 已取消\n" }
+        if let domain = errorDomain { text += "Error Domain: \(domain)\n" }
+        if let code = errorCode { text += "Error Code: \(code)\n" }
+        if let source = cancellationSource { text += "Cancellation Source: \(source)\n" }
+
         if let error = error {
             text += "Error: \(error)\n"
         }

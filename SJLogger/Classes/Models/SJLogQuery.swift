@@ -9,15 +9,18 @@ public enum SJStatusBucket: String, CaseIterable, Codable {
     case clientError = "4xx"
     case serverError = "5xx"
     case businessError = "业务失败"
+    case cancelled = "已取消"
     case error = "Error"  // 无状态码但有错误
     
     /// 判断给定日志是否落在该段
     func matches(_ log: SJLoggerModel) -> Bool {
         switch self {
+        case .cancelled:
+            return log.isCancelled
         case .businessError:
             return log.businessError != nil
         case .error:
-            return log.statusCode == nil && log.error != nil
+            return !log.isCancelled && log.statusCode == nil && (log.error != nil || log.errorCode != nil)
         default:
             guard let code = log.statusCode else { return false }
             switch self {
@@ -26,7 +29,7 @@ public enum SJStatusBucket: String, CaseIterable, Codable {
             case .redirect: return (300...399).contains(code)
             case .clientError: return (400...499).contains(code)
             case .serverError: return (500...599).contains(code)
-            case .error, .businessError: return false
+            case .error, .businessError, .cancelled: return false
             }
         }
     }
@@ -51,6 +54,8 @@ public struct SJLogQuery {
     public var endDate: Date? = nil
     /// 仅失败
     public var onlyFailed: Bool = false
+    /// 仅取消，与其他筛选条件保持 AND 关系
+    public var onlyCancelled: Bool = false
     /// 限定的接口路径（用于「按接口」下钻），nil表示不限
     public var path: String? = nil
     
@@ -66,6 +71,7 @@ public struct SJLogQuery {
             && startDate == nil
             && endDate == nil
             && !onlyFailed
+            && !onlyCancelled
             && path == nil
     }
     
@@ -78,6 +84,7 @@ public struct SJLogQuery {
             || startDate != nil
             || endDate != nil
             || onlyFailed
+            || onlyCancelled
     }
     
     /// 判断单条日志是否匹配
@@ -103,6 +110,7 @@ public struct SJLogQuery {
         if onlyFailed, !log.isFailure {
             return false
         }
+        if onlyCancelled, !log.isCancelled { return false }
         // 慢请求
         if let minMs = minDurationMs {
             guard let d = log.duration, d >= minMs else { return false }

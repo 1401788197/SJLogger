@@ -286,6 +286,6 @@ class SJEndpointCell: UITableViewCell {
         let rate = Int((group.successRate * 100).rounded())
         let avg = Int(group.averageDuration)
         let rateColor = group.hasFailure ? "⚠️ " : ""
-        statsLabel.text = "\(rateColor)成功率 \(rate)% · 平均 \(avg)ms · 失败 \(group.failedCount)"
+        statsLabel.text = "\(rateColor)成功率 \(rate)% · 平均 \(avg)ms · 失败 \(group.failedCount) · 取消 \(group.cancelledCount)"
     }
 }

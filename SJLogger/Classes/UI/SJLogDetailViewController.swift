@@ -85,6 +85,8 @@ public class SJLogDetailViewController: UIViewController {
             guard let self = self, generation == self.refreshGeneration, let latest = latest else { return }
             guard latest.statusCode != self.log.statusCode || latest.endTime != self.log.endTime
                 || latest.responseBody != self.log.responseBody || latest.error != self.log.error
+                || latest.errorDomain != self.log.errorDomain || latest.errorCode != self.log.errorCode
+                || latest.cancellationSource != self.log.cancellationSource
                 || latest.requestHeaders != self.log.requestHeaders || latest.responseHeaders != self.log.responseHeaders
                 || latest.requestBody != self.log.requestBody else { return }
             let offset = self.scrollView.contentOffset
@@ -176,9 +178,19 @@ public class SJLogDetailViewController: UIViewController {
             ("响应大小", formatBytes(log.responseSize))
         ])
         
-        // 错误信息
-        if let error = log.error {
-            addSection(title: "错误信息", content: error, color: .systemRed)
+        // 保留诊断信息；取消用中性样式，不当作接口失败。
+        var errorDetails: [String] = []
+        if let error = log.error { errorDetails.append(error) }
+        if let domain = log.errorDomain { errorDetails.append("错误域: \(domain)") }
+        if let code = log.errorCode { errorDetails.append("错误码: \(code)") }
+        if log.isCancelled {
+            errorDetails.append("取消来源: \(log.cancellationSource ?? "未记录")")
+            errorDetails.append("具体业务原因未知，可能由调用方或系统取消。")
+        }
+        if !errorDetails.isEmpty {
+            addSection(title: log.isCancelled ? "已取消" : "错误信息",
+                       content: errorDetails.joined(separator: "\n"),
+                       color: log.isCancelled ? .secondaryLabel : .systemRed)
         }
         
         // 请求头

@@ -88,7 +88,7 @@ public class SJLogListViewController: UIViewController {
     }()
     
     private lazy var compactFilterBar: SJCompactFilterBar = {
-        let bar = SJCompactFilterBar(titles: ["全部", "失败", "慢请求"])
+        let bar = SJCompactFilterBar(titles: ["全部", "失败", "慢请求", "已取消"])
         bar.onSelect = { [weak self] index in
             self?.quickFilter = SJQuickFilter(rawValue: index) ?? .all
             self?.applyQuery(reload: true)
@@ -452,6 +452,7 @@ public class SJLogListViewController: UIViewController {
         switch quickFilter {
         case .all: break
         case .failed: q.onlyFailed = true
+        case .cancelled: q.onlyCancelled = true
         case .slow: q.minDurationMs = SJLoggerConfig.shared.slowRequestThresholdMs
         }
         return q
@@ -494,7 +495,8 @@ public class SJLogListViewController: UIViewController {
         compactFilterBar.setFilterTitles([
             "全部 \(domainLogs.count)",
             "失败 \(failed)",
-            "慢请求 \(slow)"
+            "慢请求 \(slow)",
+            "已取消 \(domainLogs.filter { $0.isCancelled }.count)"
         ])
         compactFilterBar.setSelectedIndex(quickFilter.rawValue)
     }
@@ -1047,4 +1049,5 @@ enum SJQuickFilter: Int {
     case all = 0
     case failed = 1
     case slow = 2
+    case cancelled = 3
 }

@@ -268,6 +268,14 @@ SJLogger.shared.start { config in
 解析闭包仅运行时有效，可能在主线程或存储队列调用，应保持线程安全、无副作用；不要在内部读取 `businessResult`、`businessError`、`isSuccess`、`isFailure`，以免递归。
 
 
+### 请求取消
+
+`NSURLErrorDomain / -999` 单独显示为「已取消」，不计入成功或失败。列表和高级筛选支持单独查看取消请求，顶部统计、接口聚合及 `getStatistics()`（新增 `cancelled` 字段）分别统计取消数量。成功率统一按 `成功 /（成功 + 失败）` 计算，取消、进行中、重定向和未归类事件不进入分母；无成功或失败样本时显示 0%。HTTP 状态码筛选仍按原始状态码匹配。
+
+详情及文本/HAR 导出保留原始错误说明、错误域、错误码和可观察到的取消来源（`URLProtocol.stopLoading` 或 `URLSession.didCompleteWithError`）。HAR 新增 `_cancelled`、`_error`、`_errorDomain`、`_errorCode`、`_cancellationSource` 扩展字段。拦截器无法判断业务层是页面退出、刷新还是其他原因，因此不会自动推断具体取消原因。
+
+旧持久化日志可以继续读取；由于旧格式只有本地化错误文本，缺少错误域/码，历史取消记录不会被猜测性地重新分类。新采集日志使用结构化字段判定。
+
 ## WebSocket 日志
 
 ### 手动记录

@@ -157,6 +157,11 @@ public enum SJLogExporter {
                 "receive": 0
             ]
         ]
+        entry["_cancelled"] = log.isCancelled
+        if let error = log.error { entry["_error"] = error }
+        if let domain = log.errorDomain { entry["_errorDomain"] = domain }
+        if let code = log.errorCode { entry["_errorCode"] = code }
+        if let source = log.cancellationSource { entry["_cancellationSource"] = source }
         if let result = log.businessResult {
             entry["_businessResult"] = ["code": result.code, "message": result.message, "isSuccess": result.isSuccess]
         }

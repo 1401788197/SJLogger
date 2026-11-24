@@ -962,6 +962,172 @@ class Tests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
     }
 
+    func testCancellationIsSeparateFromFailureAcrossQueryStatsAndExport() throws {
+        let cancelled = makeLog(id: "cancelled", status: 200)
+        cancelled.error = "cancelled"
+        cancelled.errorDomain = NSURLErrorDomain
+        cancelled.errorCode = NSURLErrorCancelled
+        cancelled.cancellationSource = "URLProtocol.stopLoading"
+        let timeout = makeLog(id: "timeout", status: nil)
+        timeout.error = "timed out"
+        timeout.errorDomain = NSURLErrorDomain
+        timeout.errorCode = NSURLErrorTimedOut
+        let otherDomain = makeLog(id: "other-domain", status: nil)
+        otherDomain.error = "-999 from another subsystem"
+        otherDomain.errorDomain = "ExampleErrorDomain"
+        otherDomain.errorCode = -999
+        let success = makeLog(id: "success")
+        let pending = makeLog(id: "pending", status: nil)
+        let logs = [cancelled, timeout, otherDomain, success, pending]
+        XCTAssertTrue(cancelled.isCancelled)
+        XCTAssertFalse(cancelled.isSuccess)
+        XCTAssertFalse(cancelled.isFailure)
+        XCTAssertTrue(timeout.isFailure)
+        XCTAssertFalse(otherDomain.isCancelled)
+        XCTAssertTrue(otherDomain.isFailure)
+        var query = SJLogQuery()
+        query.onlyFailed = true
+        XCTAssertEqual(query.apply(to: logs).map(\.id), [timeout.id, otherDomain.id])
+        query.onlyFailed = false
+        query.statusBuckets = [.cancelled]
+        XCTAssertEqual(query.apply(to: logs).map(\.id), [cancelled.id])
+        query.statusBuckets = [.error]
+        XCTAssertEqual(query.apply(to: logs).map(\.id), [timeout.id, otherDomain.id])
+        query.onlyCancelled = true
+        XCTAssertTrue(query.apply(to: logs).isEmpty)
+        let group = try XCTUnwrap(SJEndpointGroup.build(from: logs).first)
+        XCTAssertEqual(group.cancelledCount, 1)
+        XCTAssertEqual(group.failedCount, 2)
+        XCTAssertEqual(group.successRate, 1.0 / 3.0, accuracy: 0.001)
+        for log in logs { SJLoggerStorage.shared.addLog(log) }
+        let statsRead = expectation(description: "Cancellation statistics")
+        SJLoggerStorage.shared.getStatistics { stats in
+            XCTAssertEqual(stats["total"] as? Int, 5)
+            XCTAssertEqual(stats["success"] as? Int, 1)
+            XCTAssertEqual(stats["failed"] as? Int, 2)
+            XCTAssertEqual(stats["cancelled"] as? Int, 1)
+            statsRead.fulfill()
+        }
+        wait(for: [statsRead], timeout: 2)
+        XCTAssertTrue(cancelled.generateLogText().contains("Result: 已取消"))
+        let json = try XCTUnwrap(SJLogExporter.har(for: [cancelled]).data(using: .utf8))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: json) as? [String: Any])
+        let har = try XCTUnwrap(root["log"] as? [String: Any])
+        let entry = try XCTUnwrap((har["entries"] as? [[String: Any]])?.first)
+        XCTAssertEqual(entry["_cancelled"] as? Bool, true)
+        XCTAssertEqual(entry["_errorCode"] as? Int, -999)
+        XCTAssertEqual(entry["_errorDomain"] as? String, NSURLErrorDomain)
+        XCTAssertEqual(entry["_cancellationSource"] as? String, "URLProtocol.stopLoading")
+    }
+
+    func testCancellationMetadataSurvivesSnapshotsAndLegacyDecoding() throws {
+        let log = makeLog(status: nil)
+        log.error = "localized cancellation message"
+        log.errorDomain = NSURLErrorDomain
+        log.errorCode = NSURLErrorCancelled
+        log.cancellationSource = "URLSession.didCompleteWithError"
+        let encoded = try JSONEncoder().encode(log)
+        let decoded = try JSONDecoder().decode(SJLoggerModel.self, from: encoded)
+        XCTAssertTrue(decoded.isCancelled)
+        XCTAssertTrue(decoded.snapshot().isCancelled)
+        XCTAssertEqual(decoded.snapshot().cancellationSource, log.cancellationSource)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        legacy.removeValue(forKey: "errorDomain")
+        legacy.removeValue(forKey: "errorCode")
+        legacy.removeValue(forKey: "cancellationSource")
+        let old = try JSONDecoder().decode(SJLoggerModel.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertNil(old.errorCode)
+        XCTAssertFalse(old.isCancelled) // 不从本地化文本猜测历史错误类型。
+        XCTAssertTrue(old.isFailure)
+    }
+
+    func testCancelledRequestHasNeutralUIAndOwnQuickFilter() throws {
+        let cancelled = makeLog(status: nil)
+        cancelled.error = "cancelled"
+        cancelled.errorDomain = NSURLErrorDomain
+        cancelled.errorCode = NSURLErrorCancelled
+        let cell = SJLogCell(style: .default, reuseIdentifier: nil)
+        cell.configure(with: cancelled)
+        XCTAssertTrue(cell.accessibilityLabel?.contains("已取消") == true)
+        let status = try XCTUnwrap(allSubviews(in: cell).compactMap { $0 as? UILabel }.first { $0.text == "已取消" })
+        XCTAssertEqual(status.textColor, UIColor.secondaryLabel)
+        cell.configure(with: makeLog())
+        XCTAssertFalse(cell.accessibilityLabel?.contains("已取消") == true)
+        let detail = SJLogDetailViewController(log: cancelled, updatesFromStorage: false)
+        detail.loadViewIfNeeded()
+        XCTAssertTrue(allSubviews(in: detail.view).compactMap { $0 as? UITextView }.contains {
+            $0.text.contains("错误码: -999") && $0.text.contains("具体业务原因未知")
+        })
+        let list = SJLogListViewController(title: "取消分类", logs: [cancelled, makeLog(), makeLog(status: 500)])
+        list.loadViewIfNeeded()
+        let table: UITableView = try XCTUnwrap(firstSubview(in: list.view))
+        let filter: SJCompactFilterBar = try XCTUnwrap(firstSubview(in: list.view))
+        filter.onSelect?(SJQuickFilter.cancelled.rawValue)
+        XCTAssertEqual(table.numberOfRows(inSection: 0), 1)
+        let row = try XCTUnwrap(list.tableView(table, cellForRowAt: IndexPath(row: 0, section: 0)) as? SJLogCell)
+        XCTAssertTrue(row.accessibilityLabel?.contains("已取消") == true)
+        filter.onSelect?(SJQuickFilter.failed.rawValue)
+        XCTAssertEqual(table.numberOfRows(inSection: 0), 1)
+    }
+
+    func testCompletionReenteringStopLoadingPreservesSuccessfulResponse() throws {
+        try exerciseProtocolCompletion(cancelOnResponse: false)
+    }
+
+    func testStoppingDuringResponseRecordsCancellationOnlyOnce() throws {
+        try exerciseProtocolCompletion(cancelOnResponse: true)
+    }
+
+    private func exerciseProtocolCompletion(cancelOnResponse: Bool) throws {
+        let server = try RedirectHTTPServer()
+        defer { server.stop() }
+        let ready = expectation(description: "Local server ready")
+        server.start { error in
+            XCTAssertNil(error)
+            ready.fulfill()
+        }
+        wait(for: [ready], timeout: 3)
+        let url = try XCTUnwrap(URL(string: server.baseURLString + "/final"))
+        let client = ReentrantProtocolClient()
+        let intercepted = SJURLProtocol(request: URLRequest(url: url), cachedResponse: nil, client: client)
+        let completed = expectation(description: "Protocol reaches expected callback")
+        client.onResponse = { instance in
+            if cancelOnResponse {
+                instance.stopLoading()
+                completed.fulfill()
+            }
+        }
+        client.onFinish = { instance in
+            XCTAssertFalse(cancelOnResponse, "No completion callback after cancellation")
+            instance.stopLoading() // 确定性复现原先先回调、后保存导致的 -999 覆盖。
+            completed.fulfill()
+        }
+        client.onError = { error in XCTFail("Unexpected client error: \(error)") }
+        intercepted.startLoading()
+        wait(for: [completed], timeout: 5)
+        intercepted.stopLoading() // 重复 stop 不应覆盖第一次终态。
+        let read = expectation(description: "Final log stored once")
+        SJLoggerStorage.shared.getAllLogs { logs in
+            let matching = logs.filter { $0.url == url.absoluteString }
+            XCTAssertEqual(matching.count, 1)
+            let log = matching.first
+            XCTAssertNotNil(log?.endTime)
+            XCTAssertEqual(log?.isCancelled, cancelOnResponse)
+            XCTAssertEqual(log?.isFailure, false)
+            if cancelOnResponse {
+                XCTAssertEqual(log?.errorCode, NSURLErrorCancelled)
+                XCTAssertEqual(log?.cancellationSource, "URLProtocol.stopLoading")
+            } else {
+                XCTAssertEqual(log?.statusCode, 200)
+                XCTAssertEqual(log?.responseBodyString, "redirect-ok")
+                XCTAssertEqual(log?.isSuccess, true)
+                XCTAssertNil(log?.error)
+            }
+            read.fulfill()
+        }
+        wait(for: [read], timeout: 2)
+    }
+
     private func makeTestWindow(size: CGSize) -> UIWindow {
         let window: UIWindow
         if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
@@ -1095,4 +1261,19 @@ private final class RedirectHTTPServer {
             })
         }
     }
+}
+
+
+private final class ReentrantProtocolClient: NSObject, URLProtocolClient {
+    var onResponse: ((URLProtocol) -> Void)?
+    var onFinish: ((URLProtocol) -> Void)?
+    var onError: ((Error) -> Void)?
+    func urlProtocol(_ instance: URLProtocol, didReceive response: URLResponse, cacheStoragePolicy policy: URLCache.StoragePolicy) { onResponse?(instance) }
+    func urlProtocolDidFinishLoading(_ instance: URLProtocol) { onFinish?(instance) }
+    func urlProtocol(_ instance: URLProtocol, didFailWithError error: Error) { onError?(error) }
+    func urlProtocol(_ instance: URLProtocol, didLoad data: Data) {}
+    func urlProtocol(_ instance: URLProtocol, wasRedirectedTo request: URLRequest, redirectResponse: URLResponse) {}
+    func urlProtocol(_ instance: URLProtocol, cachedResponseIsValid cachedResponse: CachedURLResponse) {}
+    func urlProtocol(_ instance: URLProtocol, didReceive challenge: URLAuthenticationChallenge) {}
+    func urlProtocol(_ instance: URLProtocol, didCancel challenge: URLAuthenticationChallenge) {}
 }

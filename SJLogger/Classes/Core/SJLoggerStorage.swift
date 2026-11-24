@@ -335,6 +335,7 @@ public class SJLoggerStorage {
                 "total": total,
                 "success": success,
                 "failed": failed,
+                "cancelled": self.logs.filter { $0.isCancelled }.count,
                 "totalSize": totalSize,
                 "typeCount": typeCount
             ]
