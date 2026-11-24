@@ -61,13 +61,13 @@ SJLogger 是一个 iOS App 内网络日志调试工具，用于在 Debug/测试�
 推荐只在 Debug 配置中集成：
 
 ```ruby
-pod 'SJLogger', '~> 0.6.0', :configurations => ['Debug']
+pod 'SJLogger', '~> 0.6.1', :configurations => ['Debug']
 ```
 
 如果你希望所有配置都安装：
 
 ```ruby
-pod 'SJLogger', '~> 0.6.0'
+pod 'SJLogger', '~> 0.6.1'
 ```
 
 `pod 'SJLogger'` 默认只会安装 `SJLogger/Core`，不会引入 Starscream。
@@ -77,7 +77,7 @@ pod 'SJLogger', '~> 0.6.0'
 如果项目里使用 Starscream，并希望自动记录 WebSocket 连接、断开、接收消息、错误等事件：
 
 ```ruby
-pod 'SJLogger/Starscream', '~> 0.6.0', :configurations => ['Debug']
+pod 'SJLogger/Starscream', '~> 0.6.1', :configurations => ['Debug']
 ```
 
 这个子库会额外引入：
@@ -299,7 +299,7 @@ SJLogger.logWebSocketSent(url: "wss://example.com/socket", text: "client message
 安装：
 
 ```ruby
-pod 'SJLogger/Starscream', '~> 0.6.0'
+pod 'SJLogger/Starscream', '~> 0.6.1'
 ```
 
 接入方式是用 `SJStarscreamProxy` 包一层你原来的 `WebSocketDelegate`。原来的代理不会失效，因为 proxy 记录日志后会继续转发事件。
@@ -433,6 +433,13 @@ SJLogger
 - 高级筛选的「重置」只重置面板条件，点击「应用」后生效；「取消」放弃本次修改。
 
 ## 更新日志
+
+### 0.6.1（2026-11-24）
+
+- 请求取消单独分类、显示和筛选，不再计入失败；成功率按成功与失败样本计算。
+- 详情及文本/HAR 导出保留错误域、错误码和可观察到的取消来源，兼容旧日志读取。
+- 修复完成回调重入 `stopLoading()` 时，成功请求可能被覆盖为取消的问题。
+- 完整模拟器 XCTest 46 项通过，包含取消分类、持久化兼容、界面与回调时序回归。
 
 ### 0.6.0（2026-11-12）
 

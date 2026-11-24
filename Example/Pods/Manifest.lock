@@ -1,7 +1,7 @@
 PODS:
-  - SJLogger (0.6.0):
-    - SJLogger/Core (= 0.6.0)
-  - SJLogger/Core (0.6.0)
+  - SJLogger (0.6.1):
+    - SJLogger/Core (= 0.6.1)
+  - SJLogger/Core (0.6.1)
 
 DEPENDENCIES:
   - SJLogger (from `../`)
@@ -11,7 +11,7 @@ EXTERNAL SOURCES:
     :path: "../"
 
 SPEC CHECKSUMS:
-  SJLogger: 0f6fe6a6df19502bb94d3a81d9cccae3e8d1d659
+  SJLogger: fa47ebd4edd91efb8065b7803d5c616b62e77f19
 
 PODFILE CHECKSUM: 1700632e8f2c14a8b2725bef611a38e4dd6226f6
 

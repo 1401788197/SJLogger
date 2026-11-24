@@ -92,7 +92,7 @@ public enum SJLogExporter {
         let har: [String: Any] = [
             "log": [
                 "version": "1.2",
-                "creator": ["name": "SJLogger", "version": "0.6.0"],
+                "creator": ["name": "SJLogger", "version": "0.6.1"],
                 "entries": entries
             ]
         ]

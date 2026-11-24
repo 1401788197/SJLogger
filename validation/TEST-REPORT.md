@@ -100,3 +100,12 @@ Xcode 26.6 / iPhone 17 Pro / iOS 26.5 完整模拟器测试 **41 项通过、0 �
 - 完整 XCTest：41 项通过，0 失败。结果包：`/tmp/SJLogger-060-release.xcresult`。
 - `pod lib lint SJLogger.podspec --allow-warnings`：Core 与 Starscream 子库验证通过；只有 Xcode AppIntents 元数据工具的无依赖提示。
 - `git diff --check` 通过。
+
+
+## 0.6.1 发布验证（2026-11-24）
+
+- 发布内容：取消独立分类、统计、筛选和导出，以及完成回调重入时的取消误报修复。
+- 功能提交 `9264271` 已运行完整 XCTest：46 项通过，0 失败；结果包 `/tmp/sjlogger-cancellation-tests.xcresult`。发布阶段仅更新版本元数据、示例锁文件和文档，未重复运行该套件。
+- podspec、HAR 版本标识、安装示例及示例工程依赖元数据统一为 0.6.1；`pod install --project-directory=Example` 成功。
+- `pod lib lint SJLogger.podspec --allow-warnings --no-ansi` 通过，覆盖 Core 与 Starscream 子库；输出仅有 Xcode AppIntents 无依赖提示及构建说明。完整日志 `/tmp/sjlogger-061-lint.log`。
+- CocoaPods 1.16.2，使用 Homebrew Ruby 4.0；`git diff --check` 通过。

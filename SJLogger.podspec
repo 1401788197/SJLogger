@@ -8,7 +8,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'SJLogger'
-  s.version          = '0.6.0'
+  s.version          = '0.6.1'
   s.summary          = 'A powerful iOS network logger framework for debugging, similar to CocoaDebug.'
 
   s.description      = <<-DESC
