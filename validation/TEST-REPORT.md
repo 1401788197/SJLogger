@@ -109,3 +109,11 @@ Xcode 26.6 / iPhone 17 Pro / iOS 26.5 完整模拟器测试 **41 项通过、0 �
 - podspec、HAR 版本标识、安装示例及示例工程依赖元数据统一为 0.6.1；`pod install --project-directory=Example` 成功。
 - `pod lib lint SJLogger.podspec --allow-warnings --no-ansi` 通过，覆盖 Core 与 Starscream 子库；输出仅有 Xcode AppIntents 无依赖提示及构建说明。完整日志 `/tmp/sjlogger-061-lint.log`。
 - CocoaPods 1.16.2，使用 Homebrew Ruby 4.0；`git diff --check` 通过。
+
+### 0.6.1 发布结果
+
+- 版本提交 `2708fb8` 与标签 `0.6.1` 已推送至 `1401788197/SJLogger` 的 `main`。
+- `pod trunk push` 完成远端源码验证后返回 GitHub commit API 超时；未盲目重试。
+- 随后确认 Trunk 已登记 0.6.1（2026-11-24 04:02:29 UTC，即北京时间 12:02:29），官方 Specs 仓库与 CocoaPods CDN 均可读取该版本。
+- 对比 Trunk 重定向规格、Specs 仓库及 CDN 的 podspec，版本与源码标签均为 0.6.1；Specs/CDN JSON 与本地 `pod ipc spec` 结果完全一致，确认发布成功。
+- 发布验证日志：`/tmp/sjlogger-061-trunk-push.log`。升级可使用 `pod 'SJLogger', '~> 0.6.1'`，已有项目执行 `pod update SJLogger --repo-update`。
